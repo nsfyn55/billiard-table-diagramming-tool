@@ -46,24 +46,29 @@ class TableRenderer:
 
     def render(self) -> Image.Image:
         """Render the table and return a PIL Image."""
-        img = Image.new("RGB", (self.img_w, self.img_h), RAIL_BROWN)
+        img = Image.new("RGB", (self.img_w, self.img_h), (30, 30, 30))
         draw = ImageDraw.Draw(img)
 
+        self._draw_rail_background(draw)
         self._draw_felt(draw)
         self._draw_spots(draw)
         self._draw_debug_ball(draw)
 
-        # Pockets first
+        # Pockets, then their covers
         self._draw_side_pockets(draw)
-        self._draw_corner_pockets(draw)
-
-        # Covers on top of pockets
         self._draw_side_pocket_covers(draw)
+        self._draw_corner_pockets(draw)
         self._draw_corner_pocket_covers(draw)
 
-        # Cushions last, on top of everything
+        # Cushions on top of pockets
         self._draw_side_cushions(draw)
         self._draw_corner_cushions(draw)
+
+        # Rail groove between cushion and rail wood
+        self._draw_rail_groove(draw)
+
+        # Silver border on top of everything at the edge
+        self._draw_silver_border(draw)
 
         # Diamonds on top of rails
         self._draw_diamonds(draw)
@@ -106,6 +111,58 @@ class TableRenderer:
                 [px - r_center, py - r_center, px + r_center, py + r_center],
                 fill=(20, 20, 20))
 
+    def _draw_rail_background(self, draw: ImageDraw.Draw):
+        """Draw the brown rail as a rounded rectangle background."""
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        rw = self.rail_width
+        radius = int(1.2 * self.ppi)
+        ix0, iy0 = self.table_to_pixel(-hw - rw, hl + rw)
+        ix1, iy1 = self.table_to_pixel(hw + rw, -hl - rw)
+        draw.rounded_rectangle([ix0, iy0, ix1, iy1], radius=radius, fill=RAIL_BROWN)
+
+    def _draw_silver_border(self, draw: ImageDraw.Draw):
+        """Draw the silver metallic border strip around the outside of the rail."""
+        import random
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        rw = self.rail_width
+        border_width = 0.35
+        outer_radius = int(1.5 * self.ppi)
+        inner_radius = int(1.2 * self.ppi)
+
+        # Outer silver rounded rect
+        ox0, oy0 = self.table_to_pixel(-hw - rw - border_width, hl + rw + border_width)
+        ox1, oy1 = self.table_to_pixel(hw + rw + border_width, -hl - rw - border_width)
+
+        # Draw silver base then texture, then punch out the inner area
+        # Use a temporary image to composite properly
+        border_img = Image.new("RGBA", (self.img_w, self.img_h), (0, 0, 0, 0))
+        border_draw = ImageDraw.Draw(border_img)
+
+        # Outer rounded rect
+        border_draw.rounded_rectangle([ox0, oy0, ox1, oy1], radius=outer_radius,
+                                       fill=(160, 165, 170, 255))
+
+        # Brushed metal texture
+        random.seed(42)
+        for py in range(int(oy0), int(oy1)):
+            shade = 155 + random.randint(-15, 15)
+            border_draw.line([(ox0, py), (ox1, py)],
+                              fill=(shade, shade + 3, shade + 6, 255), width=1)
+
+        # Cut out the inner area (rail stays visible underneath)
+        ix0, iy0 = self.table_to_pixel(-hw - rw, hl + rw)
+        ix1, iy1 = self.table_to_pixel(hw + rw, -hl - rw)
+        border_draw.rounded_rectangle([ix0, iy0, ix1, iy1], radius=inner_radius,
+                                       fill=(0, 0, 0, 0))
+
+        # Composite onto main image
+        img = draw._image
+        img.paste(border_img, (0, 0), border_img)
+
     def _draw_debug_ball(self, draw: ImageDraw.Draw):
         """Draw a single ball at the foot spot for scale reference."""
         cfg = self.config
@@ -129,8 +186,8 @@ class TableRenderer:
         opening_half = spr - taper
         cover_extent = spr + 2.0
 
-        for side_x, rail_outer_x in [(-hw, -hw - self.rail_width - 1),
-                                      (hw, hw + self.rail_width + 1)]:
+        for side_x, rail_outer_x in [(-hw, -hw - self.rail_width),
+                                      (hw, hw + self.rail_width)]:
             x0, y0 = self.table_to_pixel(min(side_x, rail_outer_x), cover_extent)
             x1, y1 = self.table_to_pixel(max(side_x, rail_outer_x), opening_half)
             draw.rectangle([x0, y0, x1, y1], fill=RAIL_BROWN)
@@ -298,6 +355,65 @@ class TableRenderer:
             rail_end=(hw - corner_gap, -hl),
             inward_direction=(0, 1),
             cushion_width=cw, taper=taper, start_taper=corner_taper, end_taper=corner_taper)
+
+    def _draw_rail_groove(self, draw: ImageDraw.Draw):
+        """Draw shaded lines between cushion and rail to create an indentation effect.
+
+        Lines are drawn as individual segments matching the cushion positions,
+        stopping at pocket openings.
+        """
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        cw = cfg.cushion_width
+        corner_gap = cfg.corner_pocket_width * 0.55
+        spr = cfg.side_pocket_width / 2
+        taper = cw * 0.5 / 1.33
+        side_gap = spr - taper
+
+        groove_lines = [
+            (40, 30, 20),
+            (55, 40, 25),
+            (70, 50, 30),
+            (85, 58, 32),
+        ]
+
+        for i, color in enumerate(groove_lines):
+            offset = (i + 1) / self.ppi
+
+            # Left rail — top half (corner to side pocket)
+            x = -hw - offset
+            p0 = self.table_to_pixel(x, hl - corner_gap)
+            p1 = self.table_to_pixel(x, side_gap)
+            draw.line([p0, p1], fill=color, width=1)
+
+            # Left rail — bottom half
+            p0 = self.table_to_pixel(x, -side_gap)
+            p1 = self.table_to_pixel(x, -hl + corner_gap)
+            draw.line([p0, p1], fill=color, width=1)
+
+            # Right rail — top half
+            x = hw + offset
+            p0 = self.table_to_pixel(x, hl - corner_gap)
+            p1 = self.table_to_pixel(x, side_gap)
+            draw.line([p0, p1], fill=color, width=1)
+
+            # Right rail — bottom half
+            p0 = self.table_to_pixel(x, -side_gap)
+            p1 = self.table_to_pixel(x, -hl + corner_gap)
+            draw.line([p0, p1], fill=color, width=1)
+
+            # Top rail
+            y = hl + offset
+            p0 = self.table_to_pixel(-hw + corner_gap, y)
+            p1 = self.table_to_pixel(hw - corner_gap, y)
+            draw.line([p0, p1], fill=color, width=1)
+
+            # Bottom rail
+            y = -hl - offset
+            p0 = self.table_to_pixel(-hw + corner_gap, y)
+            p1 = self.table_to_pixel(hw - corner_gap, y)
+            draw.line([p0, p1], fill=color, width=1)
 
     def _draw_diamonds(self, draw: ImageDraw.Draw):
         """Draw diamond sights on the rails."""
