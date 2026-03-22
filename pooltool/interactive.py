@@ -1027,6 +1027,7 @@ function applyZoom() {
   // Set wrapper size to match original table display size
   tableWrapper.style.width = tableImg.clientWidth + 'px';
   tableWrapper.style.height = tableImg.clientHeight + 'px';
+  paths.forEach(renderPath);
 }
 
 // Crop selection drawing
