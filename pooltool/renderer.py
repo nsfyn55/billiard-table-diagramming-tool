@@ -63,15 +63,38 @@ class TableRenderer:
         py = self.offset_y + (self.config.half_length - y) * self.ppi
         return px, py
 
-    def render(self) -> Image.Image:
-        """Render the table and return a PIL Image."""
+    def render(self, balls: list[tuple[int, float, float]] | None = None,
+               ghosts: list[tuple[float, float]] | None = None,
+               paths: list[tuple[float, float, float, float]] | None = None,
+               highlights: list[tuple[float, float]] | None = None) -> Image.Image:
+        """Render the table and return a PIL Image.
+
+        balls: list of (ball_number, x, y) tuples. Ball 0 = cue ball.
+        ghosts: list of (x, y) for dotted ghost ball circles.
+        paths: list of (x1, y1, x2, y2) for dotted lines with arrowheads.
+        highlights: list of (x, y) for red highlight circles.
+        """
         img = Image.new("RGB", (self.img_w, self.img_h), (30, 30, 30))
         draw = ImageDraw.Draw(img)
 
         self._draw_rail_background(draw)
         self._draw_felt(draw)
         self._draw_spots(draw)
-        self._draw_debug_balls(draw)
+
+        if balls:
+            for ball_number, x, y in balls:
+                self.draw_ball(draw, x, y, ball_number)
+
+        # Annotations on top of balls
+        if ghosts:
+            for x, y in ghosts:
+                self.draw_ghost_ball(draw, x, y)
+        if paths:
+            for x1, y1, x2, y2 in paths:
+                self.draw_path(draw, x1, y1, x2, y2)
+        if highlights:
+            for x, y in highlights:
+                self.draw_highlight(draw, x, y)
 
         # Pockets, then their covers
         self._draw_side_pockets(draw)
@@ -237,6 +260,74 @@ class TableRenderer:
         ty = py - th / 2 - bbox[1]  # adjust for font baseline offset
         draw.text((tx, ty), text, fill=(0, 0, 0), font=font)
 
+    # ========================================================================
+    # ANNOTATION TOOLS
+    # ========================================================================
+
+    def draw_ghost_ball(self, draw: ImageDraw.Draw, table_x: float, table_y: float):
+        """Draw a dotted circle at ball size — shows contact point or final position."""
+        px, py = self.table_to_pixel(table_x, table_y)
+        r = self.config.ball_radius * self.ppi
+        num_dashes = 24
+        dash_fraction = 0.5  # fraction of arc that is drawn vs gap
+        for i in range(num_dashes):
+            start_angle = (360 / num_dashes) * i
+            end_angle = start_angle + (360 / num_dashes) * dash_fraction
+            draw.arc([px - r, py - r, px + r, py + r],
+                      start=start_angle, end=end_angle,
+                      fill=(255, 255, 255), width=2)
+
+    def draw_path(self, draw: ImageDraw.Draw, x1: float, y1: float,
+                   x2: float, y2: float, color: tuple = (255, 255, 255)):
+        """Draw a dotted line with arrowhead from (x1,y1) to (x2,y2)."""
+        px1, py1 = self.table_to_pixel(x1, y1)
+        px2, py2 = self.table_to_pixel(x2, y2)
+
+        # Dotted line
+        dx = px2 - px1
+        dy = py2 - py1
+        length = math.sqrt(dx**2 + dy**2)
+        if length == 0:
+            return
+        ux, uy = dx / length, dy / length  # unit vector
+
+        dash_len = 8
+        gap_len = 6
+        pos = 0
+        while pos < length:
+            seg_end = min(pos + dash_len, length)
+            sx = px1 + ux * pos
+            sy = py1 + uy * pos
+            ex = px1 + ux * seg_end
+            ey = py1 + uy * seg_end
+            draw.line([(sx, sy), (ex, ey)], fill=color, width=2)
+            pos += dash_len + gap_len
+
+        # Arrowhead at the end
+        arrow_size = 10
+        # Perpendicular vector
+        perp_x, perp_y = -uy, ux
+        # Arrow tip is at (px2, py2), wings are behind it
+        wing1 = (px2 - ux * arrow_size + perp_x * arrow_size * 0.5,
+                 py2 - uy * arrow_size + perp_y * arrow_size * 0.5)
+        wing2 = (px2 - ux * arrow_size - perp_x * arrow_size * 0.5,
+                 py2 - uy * arrow_size - perp_y * arrow_size * 0.5)
+        draw.polygon([(px2, py2), wing1, wing2], fill=color)
+
+    def draw_highlight(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
+                        radius: float | None = None):
+        """Draw a red highlight circle at the given position."""
+        px, py = self.table_to_pixel(table_x, table_y)
+        r = (radius or self.config.ball_diameter) * self.ppi
+        highlight_color = (255, 40, 40)
+        # Draw multiple concentric rings for a glowing effect
+        for i in range(3):
+            ring_r = r + i * 2
+            alpha = 255 - i * 60
+            ring_color = (255, max(0, 40 - i * 15), max(0, 40 - i * 15))
+            draw.ellipse([px - ring_r, py - ring_r, px + ring_r, py + ring_r],
+                          outline=ring_color, width=2)
+
     def _draw_rail_background(self, draw: ImageDraw.Draw):
         """Draw the brown rail as a rounded rectangle background."""
         cfg = self.config
@@ -288,41 +379,6 @@ class TableRenderer:
         # Composite onto main image
         img = draw._image
         img.paste(border_img, (0, 0), border_img)
-
-    def _draw_debug_balls(self, draw: ImageDraw.Draw):
-        """Draw a racked set of balls with cue ball at the head spot."""
-        import random
-        random.seed(42)
-        cfg = self.config
-        foot_x, foot_y = 0, -cfg.half_length / 2
-        d = cfg.ball_diameter
-        row_dy = d * math.sqrt(3) / 2  # vertical offset per row
-
-        # Build rack: 5 rows, 8 ball fixed in center (row 2, position 1)
-        # Head ball is ball 1
-        remaining = list(range(2, 16))  # 2-15, excluding 8
-        remaining.remove(8)
-        random.shuffle(remaining)
-
-        rack = [
-            [1],                                           # row 0: head ball
-            [remaining.pop(), remaining.pop()],            # row 1
-            [remaining.pop(), 8, remaining.pop()],         # row 2: 8 in center
-            [remaining.pop() for _ in range(4)],           # row 3
-            [remaining.pop() for _ in range(5)],           # row 4
-        ]
-
-        # Draw back to front so front balls overlap
-        for row_idx in reversed(range(len(rack))):
-            row = rack[row_idx]
-            n_balls = len(row)
-            y = foot_y - row_idx * row_dy
-            for j, ball_num in enumerate(row):
-                x = foot_x + (j - (n_balls - 1) / 2) * d
-                self.draw_ball(draw, x, y, ball_num)
-
-        # Cue ball at head spot
-        self.draw_ball(draw, 0, cfg.half_length / 2, 0)
 
     # ========================================================================
     # SIDE POCKETS — fully self-contained, do not modify for corner work
@@ -656,54 +712,6 @@ class TableRenderer:
         ]
 
         draw.polygon(points, fill=CUSHION_GREEN)
-
-    def _draw_corner_pocket(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
-                            radius: float, rotation_deg: float):
-        """Draw a corner pocket as a U-shape: semicircle + rectangular walls.
-
-        The U opens upward (toward positive y in pixel space) by default,
-        then is rotated by rotation_deg around the center point.
-
-        radius: half-width of the U
-        rotation_deg: rotation in degrees (0 = opening faces up in pixel coords)
-        """
-        px, py = self.table_to_pixel(table_x, table_y)
-        r_px = radius * self.ppi
-        wall_length = r_px * 1.0  # how tall the straight walls are
-
-        # Build U-shape points: opening at top, curve at bottom
-        # Left wall top -> left wall bottom -> arc across bottom -> right wall bottom -> right wall top
-        num_arc_points = 30
-        points = []
-
-        # Top-left (opening)
-        points.append((-r_px, -wall_length))
-        # Bottom-left (where arc starts)
-        points.append((-r_px, 0))
-
-        # Semicircle arc from left to right across the bottom (180° to 0°)
-        for i in range(num_arc_points + 1):
-            angle = math.pi - (math.pi * i / num_arc_points)  # pi -> 0
-            ax = r_px * math.cos(angle)
-            ay = r_px * math.sin(angle)  # positive = up, but we want curve going down
-            points.append((ax, ay))
-
-        # Bottom-right to top-right
-        points.append((r_px, 0))
-        points.append((r_px, -wall_length))
-
-        # Rotate all points
-        rot_rad = math.radians(rotation_deg)
-        cos_r = math.cos(rot_rad)
-        sin_r = math.sin(rot_rad)
-
-        rotated = []
-        for x, y in points:
-            rx = x * cos_r - y * sin_r
-            ry = x * sin_r + y * cos_r
-            rotated.append((px + rx, py + ry))
-
-        draw.polygon(rotated, fill=POCKET_BLACK)
 
     def _draw_side_pocket_stadium(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
                                    radius: float, rotation_deg: float):
