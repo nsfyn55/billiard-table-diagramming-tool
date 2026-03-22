@@ -53,13 +53,22 @@ def parse_path(value: str) -> tuple[float, float, float, float]:
               help="Ball path (dotted line with arrow): X1,Y1:X2,Y2")
 @click.option("--highlight", "-h", "highlights", multiple=True,
               help="Red highlight circle: X,Y")
+@click.option("--interactive", "-i", is_flag=True,
+              help="Launch interactive web editor instead of generating an image")
+@click.option("--port", default=5555, help="Port for interactive editor (default: 5555)")
 def main(table_size: str, output: str, ppi: float,
          balls: tuple[str, ...], ghosts: tuple[str, ...],
-         paths: tuple[str, ...], highlights: tuple[str, ...]):
+         paths: tuple[str, ...], highlights: tuple[str, ...],
+         interactive: bool, port: int):
     """Generate a pool table diagram.
 
     Coordinates are in inches from table center (0,0).
     """
+    if interactive:
+        from pooltool.interactive import run
+        run(table_size=table_size, ppi=max(ppi, 24.0), port=port)
+        return
+
     config = TABLES[table_size]
     renderer = TableRenderer(config, pixels_per_inch=ppi)
 
