@@ -7,10 +7,10 @@ from pooltool.table import TableConfig
 
 
 # Colors
-FELT_GREEN = (0, 100, 0)
+FELT_GREEN = (80, 190, 220)
 RAIL_BROWN = (101, 67, 33)
 POCKET_BLACK = (20, 20, 20)
-CUSHION_GREEN = (34, 139, 34)
+CUSHION_GREEN = (55, 155, 185)
 DIAMOND_WHITE = (220, 200, 160)
 
 # Ball colors by number

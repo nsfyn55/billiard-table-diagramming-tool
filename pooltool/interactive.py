@@ -99,6 +99,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     user-select: none;
   }
 
+  /* Editor wrapper — keeps palette and main-area aligned */
+  #editor-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   /* Palette */
   #palette {
     display: flex;
@@ -106,7 +113,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     margin-bottom: 10px;
     flex-wrap: wrap;
     justify-content: center;
-    max-width: 1000px;
     background: #2a2a2a;
     padding: 10px 16px;
     border-radius: 8px;
@@ -152,20 +158,68 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     filter: drop-shadow(0 0 6px rgba(255,255,255,0.9));
   }
 
-  /* Path mode button */
+  /* Main layout: side palette + table */
+  #main-area {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  /* Side annotations palette */
+  #annotations-palette {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #2a2a2a;
+    padding: 10px 12px;
+    border-radius: 8px;
+    align-items: center;
+    width: 180px;
+    flex-shrink: 0;
+  }
+  #annotations-palette .section-label {
+    font-size: 10px;
+    color: #888;
+    margin-bottom: 2px;
+  }
+
+  /* Mode buttons */
   .mode-btn {
     background: #333;
     color: #ddd;
     border: 1px solid #555;
-    padding: 6px 14px;
+    padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
-    margin-left: 12px;
-    align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .mode-btn:hover { background: #444; }
   .mode-btn.active { background: #665522; border-color: #aa8833; color: #fff; }
+
+  /* Ghost palette item */
+  .palette-ghost {
+    cursor: grab;
+    transition: transform 0.1s;
+  }
+  .palette-ghost:hover { transform: scale(1.15); }
+  .palette-ghost:active { cursor: grabbing; }
+
+  /* Ghost ball on table */
+  .ghost-sprite {
+    position: absolute;
+    border: 2px dashed rgba(255,255,255,0.8);
+    border-radius: 50%;
+    cursor: grab;
+    transition: box-shadow 0.1s;
+  }
+  .ghost-sprite:active { cursor: grabbing; }
+  .ghost-sprite.selected {
+    box-shadow: 0 0 8px rgba(255,255,255,0.7);
+  }
 
   /* Path SVG overlay */
   #path-svg {
@@ -231,25 +285,41 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 
-<div id="palette">
-  <span class="section-label">Cue</span>
-  <img class="palette-ball" data-ball="0" src="data:image/png;base64,{{ ball_images[0] }}" draggable="true" title="Cue ball" />
-  <span class="section-label">Solids</span>
-  {% for n in range(1, 8) %}
-  <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
-  {% endfor %}
-  <span class="section-label">8</span>
-  <img class="palette-ball" data-ball="8" src="data:image/png;base64,{{ ball_images[8] }}" draggable="true" title="8-ball" />
-  <span class="section-label">Stripes</span>
-  {% for n in range(9, 16) %}
-  <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
-  {% endfor %}
-  <button class="mode-btn" id="path-mode-btn" title="Draw arrow paths (click and drag)">&#x27B6; Path</button>
-</div>
-
-<div id="table-container">
-  <img id="table-img" src="data:image/png;base64,{{ table_image }}" />
-  <svg id="path-svg"></svg>
+<div id="editor-wrapper">
+  <div id="palette">
+    <span class="section-label">Cue</span>
+    <img class="palette-ball" data-ball="0" src="data:image/png;base64,{{ ball_images[0] }}" draggable="true" title="Cue ball" />
+    <span class="section-label">Solids</span>
+    {% for n in range(1, 8) %}
+    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
+    {% endfor %}
+    <span class="section-label">8</span>
+    <img class="palette-ball" data-ball="8" src="data:image/png;base64,{{ ball_images[8] }}" draggable="true" title="8-ball" />
+    <span class="section-label">Stripes</span>
+    {% for n in range(9, 16) %}
+    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
+    {% endfor %}
+  </div>
+  <div id="main-area">
+  <div id="annotations-palette">
+    <span class="section-label">Annotations</span>
+    <button class="mode-btn" id="path-mode-btn" title="Draw arrow paths (click and drag)">
+      <svg width="28" height="16" viewBox="0 0 28 16">
+        <line x1="2" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-dasharray="4,3"/>
+        <polygon points="24,8 18,4 18,12" fill="currentColor"/>
+      </svg>
+    </button>
+    <div class="palette-ghost" id="ghost-drag" draggable="true" title="Drag ghost ball onto table">
+      <svg width="36" height="36" viewBox="0 0 36 36">
+        <circle cx="18" cy="18" r="13" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-dasharray="4,3"/>
+      </svg>
+    </div>
+  </div>
+  <div id="table-container">
+    <img id="table-img" src="data:image/png;base64,{{ table_image }}" />
+    <svg id="path-svg"></svg>
+  </div>
+  </div>
 </div>
 
 <div id="output">Drag balls from the palette onto the table. Click to select, Delete to remove, Esc to deselect.</div>
@@ -341,6 +411,11 @@ let selectedPath = null;
 let pathMode = false;
 const pathSvg = document.getElementById('path-svg');
 
+// State: ghost balls
+const ghosts = []; // { id, tx, ty, el }
+let nextGhostId = 0;
+let selectedGhost = null;
+
 // --- Palette drag ---
 document.querySelectorAll('.palette-ball').forEach(img => {
   img.addEventListener('dragstart', (e) => {
@@ -357,14 +432,20 @@ container.addEventListener('dragover', (e) => {
 
 container.addEventListener('drop', (e) => {
   e.preventDefault();
-  const ballNum = parseInt(e.dataTransfer.getData('text/plain'));
-  if (isNaN(ballNum)) return;
+  const data = e.dataTransfer.getData('text/plain');
   const rect = tableImg.getBoundingClientRect();
   const dispX = e.clientX - rect.left;
   const dispY = e.clientY - rect.top;
-  let [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
-  [tx, ty] = resolveOverlaps(ballNum, tx, ty);
-  placeBall(ballNum, tx, ty);
+  const [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
+
+  if (data === 'ghost') {
+    placeGhost(tx, ty);
+  } else {
+    const ballNum = parseInt(data);
+    if (isNaN(ballNum)) return;
+    let [bx, by] = resolveOverlaps(ballNum, tx, ty);
+    placeBall(ballNum, bx, by);
+  }
 });
 
 function placeBall(num, tx, ty) {
@@ -434,6 +515,13 @@ function selectPath(id) {
   }
 }
 
+function selectGhost(id) {
+  deselectAll();
+  selectedGhost = id;
+  const g = ghosts.find(g => g.id === id);
+  if (g) g.el.classList.add('selected');
+}
+
 function deselectAll() {
   if (selectedBall !== null && placedBalls[selectedBall]) {
     placedBalls[selectedBall].el.classList.remove('selected');
@@ -447,6 +535,11 @@ function deselectAll() {
     }
   }
   selectedPath = null;
+  if (selectedGhost !== null) {
+    const g = ghosts.find(g => g.id === selectedGhost);
+    if (g) g.el.classList.remove('selected');
+  }
+  selectedGhost = null;
 }
 
 function removeBall(num) {
@@ -465,6 +558,15 @@ function removePath(id) {
   paths[idx].group.remove();
   paths.splice(idx, 1);
   if (selectedPath === id) selectedPath = null;
+  exportCLI();
+}
+
+function removeGhost(id) {
+  const idx = ghosts.findIndex(g => g.id === id);
+  if (idx === -1) return;
+  ghosts[idx].el.remove();
+  ghosts.splice(idx, 1);
+  if (selectedGhost === id) selectedGhost = null;
   exportCLI();
 }
 
@@ -518,9 +620,10 @@ function makeTableDraggable(el, entry) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     deselectAll();
-    if (pathMode) togglePathMode();
+    if (pathMode) togglePathMode(false);
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (selectedPath !== null) removePath(selectedPath);
+    if (selectedGhost !== null) removeGhost(selectedGhost);
+    else if (selectedPath !== null) removePath(selectedPath);
     else if (selectedBall !== null) removeBall(selectedBall);
   }
 });
@@ -539,12 +642,91 @@ container.addEventListener('mousemove', (e) => {
   coordsEl.textContent = `(${tx}, ${ty})`;
 });
 
+// ========== GHOST BALL DRAG FROM PALETTE ==========
+const ghostDrag = document.getElementById('ghost-drag');
+ghostDrag.addEventListener('dragstart', (e) => {
+  e.dataTransfer.setData('text/plain', 'ghost');
+  e.dataTransfer.effectAllowed = 'copy';
+});
+
+function placeGhost(tx, ty) {
+  const id = nextGhostId++;
+  const size = ballDisplaySize();
+  const el = document.createElement('div');
+  el.className = 'ghost-sprite';
+  el.style.width = size + 'px';
+  el.style.height = size + 'px';
+  container.appendChild(el);
+
+  const entry = { id, tx, ty, el };
+  ghosts.push(entry);
+  positionGhost(entry);
+
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectGhost(id);
+  });
+
+  // Make draggable
+  makeGhostDraggable(el, entry);
+  selectGhost(id);
+  exportCLI();
+}
+
+function positionGhost(entry) {
+  const [dpx, dpy] = tableToPx(entry.tx, entry.ty);
+  const size = ballDisplaySize();
+  entry.el.style.left = (dpx - size / 2) + 'px';
+  entry.el.style.top = (dpy - size / 2) + 'px';
+}
+
+function makeGhostDraggable(el, entry) {
+  let dragging = false;
+  let startX, startY, origLeft, origTop;
+  let moved = false;
+
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    origLeft = parseFloat(el.style.left) || 0;
+    origTop = parseFloat(el.style.top) || 0;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+    el.style.left = (origLeft + dx) + 'px';
+    el.style.top = (origTop + dy) + 'px';
+    const size = ballDisplaySize();
+    const centerX = parseFloat(el.style.left) + size / 2;
+    const centerY = parseFloat(el.style.top) + size / 2;
+    const [tx, ty] = clampToTable(...pxToTable(centerX, centerY));
+    entry.tx = tx;
+    entry.ty = ty;
+    positionGhost(entry);
+    coordsEl.textContent = `Ghost: (${tx}, ${ty})`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragging) {
+      dragging = false;
+      if (moved) exportCLI();
+    }
+  });
+}
+
 // ========== PATH MODE ==========
 const pathModeBtn = document.getElementById('path-mode-btn');
-pathModeBtn.addEventListener('click', togglePathMode);
+pathModeBtn.addEventListener('click', () => togglePathMode());
 
-function togglePathMode() {
-  pathMode = !pathMode;
+function togglePathMode(force) {
+  pathMode = force !== undefined ? force : !pathMode;
   pathModeBtn.classList.toggle('active', pathMode);
   container.style.cursor = pathMode ? 'crosshair' : '';
 }
@@ -728,10 +910,13 @@ function exportCLI() {
     const b = placedBalls[n];
     parts.push(`-b ${n}:${b.tx},${b.ty}`);
   });
+  ghosts.forEach(g => {
+    parts.push(`-g ${g.tx},${g.ty}`);
+  });
   paths.forEach(p => {
     parts.push(`-p ${p.x1},${p.y1}:${p.x2},${p.y2}`);
   });
-  if (nums.length === 0 && paths.length === 0) {
+  if (nums.length === 0 && paths.length === 0 && ghosts.length === 0) {
     output.textContent = 'No items placed.';
     return;
   }
@@ -743,6 +928,7 @@ window.addEventListener('resize', () => {
   updateScale();
   resizePathSvg();
   Object.values(placedBalls).forEach(positionBall);
+  ghosts.forEach(positionGhost);
   paths.forEach(renderPath);
 });
 </script>
