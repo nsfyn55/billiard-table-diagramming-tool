@@ -1,7 +1,7 @@
 """Renders pool table diagrams to PNG images using Pillow."""
 
 import math
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from pooltool.table import TableConfig
 
@@ -12,6 +12,25 @@ RAIL_BROWN = (101, 67, 33)
 POCKET_BLACK = (20, 20, 20)
 CUSHION_GREEN = (34, 139, 34)
 DIAMOND_WHITE = (220, 200, 160)
+
+# Ball colors by number
+BALL_COLORS = {
+    1: ((255, 215, 0), "solid"),       # yellow
+    2: ((0, 0, 200), "solid"),         # blue
+    3: ((200, 0, 0), "solid"),         # red
+    4: ((100, 0, 150), "solid"),       # purple
+    5: ((255, 140, 0), "solid"),       # orange
+    6: ((0, 120, 0), "solid"),         # green
+    7: ((130, 30, 30), "solid"),       # maroon
+    8: ((0, 0, 0), "solid"),           # black
+    9: ((255, 215, 0), "stripe"),      # yellow stripe
+    10: ((0, 0, 200), "stripe"),       # blue stripe
+    11: ((200, 0, 0), "stripe"),       # red stripe
+    12: ((100, 0, 150), "stripe"),     # purple stripe
+    13: ((255, 140, 0), "stripe"),     # orange stripe
+    14: ((0, 120, 0), "stripe"),       # green stripe
+    15: ((130, 30, 30), "stripe"),     # maroon stripe
+}
 
 
 class TableRenderer:
@@ -52,7 +71,7 @@ class TableRenderer:
         self._draw_rail_background(draw)
         self._draw_felt(draw)
         self._draw_spots(draw)
-        self._draw_debug_ball(draw)
+        self._draw_debug_balls(draw)
 
         # Pockets, then their covers
         self._draw_side_pockets(draw)
@@ -111,6 +130,113 @@ class TableRenderer:
                 [px - r_center, py - r_center, px + r_center, py + r_center],
                 fill=(20, 20, 20))
 
+    def draw_ball(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
+                   ball_number: int):
+        """Draw a pool ball at the given table coordinates.
+
+        Ball appearance is determined by BALL_COLORS lookup.
+        Use ball_number=0 for cue ball (white).
+        """
+        px, py = self.table_to_pixel(table_x, table_y)
+        r = self.config.ball_radius * self.ppi
+
+        if ball_number == 0:
+            # Cue ball — plain white
+            draw.ellipse([px - r, py - r, px + r, py + r], fill=(255, 255, 255))
+            draw.ellipse([px - r, py - r, px + r, py + r], outline=(200, 200, 200))
+            return
+
+        color, ball_type = BALL_COLORS[ball_number]
+        number_circle_r = r * 0.38
+        shadow_color = tuple(max(0, c - 40) for c in color)
+
+        if ball_type == "solid":
+            self._draw_solid_ball(draw, px, py, r, color, shadow_color,
+                                   number_circle_r, ball_number)
+        else:
+            self._draw_stripe_ball(draw, px, py, r, color, shadow_color,
+                                    number_circle_r, ball_number)
+
+    def _draw_solid_ball(self, draw: ImageDraw.Draw, px: float, py: float,
+                          r: float, color: tuple, shadow_color: tuple,
+                          number_r: float, number: int):
+        """Draw a solid ball: colored circle with white number circle."""
+        # Shadow/outline
+        draw.ellipse([px - r, py - r, px + r, py + r], fill=shadow_color)
+        # Main body (slightly smaller for shadow effect)
+        inner = r * 0.92
+        draw.ellipse([px - inner, py - inner, px + inner, py + inner], fill=color)
+        # Highlight
+        hx, hy = px - r * 0.25, py - r * 0.25
+        hr = r * 0.3
+        highlight = tuple(min(255, c + 80) for c in color)
+        draw.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=highlight)
+        # White number circle
+        draw.ellipse([px - number_r, py - number_r, px + number_r, py + number_r],
+                      fill=(255, 255, 255))
+        # Number text
+        self._draw_ball_number(draw, px, py, number_r, number)
+
+    def _draw_stripe_ball(self, draw: ImageDraw.Draw, px: float, py: float,
+                           r: float, color: tuple, shadow_color: tuple,
+                           number_r: float, number: int):
+        """Draw a stripe ball: white base with colored band across middle."""
+        # Shadow/outline
+        draw.ellipse([px - r, py - r, px + r, py + r], fill=(180, 180, 180))
+        # White base
+        inner = r * 0.92
+        draw.ellipse([px - inner, py - inner, px + inner, py + inner],
+                      fill=(255, 255, 255))
+        # Colored stripe band (horizontal across the middle)
+        stripe_half_h = r * 0.45  # half-height of stripe
+        # Draw stripe as a clipped rectangle using polygon with arc approximation
+        num_points = 40
+        top_arc = []
+        bot_arc = []
+        for i in range(num_points + 1):
+            angle = math.pi + (math.pi * i / num_points)  # pi to 2pi (bottom half)
+            x = px + inner * math.cos(angle)
+            y_circle = py + inner * math.sin(angle)
+            y_stripe_top = py - stripe_half_h
+            # Top arc: intersection of circle and stripe top
+            top_arc.append((x, max(y_circle, y_stripe_top)))
+        for i in range(num_points + 1):
+            angle = math.pi * i / num_points  # 0 to pi (top half)
+            x = px + inner * math.cos(angle)
+            y_circle = py + inner * math.sin(angle)
+            y_stripe_bot = py + stripe_half_h
+            bot_arc.append((x, min(y_circle, y_stripe_bot)))
+        # Combine into stripe polygon
+        stripe_points = top_arc + list(reversed(bot_arc))
+        if len(stripe_points) >= 3:
+            draw.polygon(stripe_points, fill=color)
+        # Highlight on stripe
+        hx, hy = px - r * 0.25, py - r * 0.15
+        hr = r * 0.2
+        highlight = tuple(min(255, c + 60) for c in color)
+        draw.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=highlight)
+        # White number circle
+        draw.ellipse([px - number_r, py - number_r, px + number_r, py + number_r],
+                      fill=(255, 255, 255))
+        # Number text
+        self._draw_ball_number(draw, px, py, number_r, number)
+
+    def _draw_ball_number(self, draw: ImageDraw.Draw, px: float, py: float,
+                           circle_r: float, number: int):
+        """Draw the number text centered in the ball's number circle."""
+        text = str(number)
+        font_size = max(int(circle_r * 1.3), 8)
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        tx = px - tw / 2
+        ty = py - th / 2 - bbox[1]  # adjust for font baseline offset
+        draw.text((tx, ty), text, fill=(0, 0, 0), font=font)
+
     def _draw_rail_background(self, draw: ImageDraw.Draw):
         """Draw the brown rail as a rounded rectangle background."""
         cfg = self.config
@@ -163,14 +289,40 @@ class TableRenderer:
         img = draw._image
         img.paste(border_img, (0, 0), border_img)
 
-    def _draw_debug_ball(self, draw: ImageDraw.Draw):
-        """Draw a single ball at the foot spot for scale reference."""
+    def _draw_debug_balls(self, draw: ImageDraw.Draw):
+        """Draw a racked set of balls with cue ball at the head spot."""
+        import random
+        random.seed(42)
         cfg = self.config
-        px, py = self.table_to_pixel(0, -cfg.half_length / 2)
-        r = cfg.ball_radius * self.ppi
-        draw.ellipse([px - r, py - r, px + r, py + r], fill=(255, 255, 255))
-        # Slight shadow/outline
-        draw.ellipse([px - r, py - r, px + r, py + r], outline=(180, 180, 180))
+        foot_x, foot_y = 0, -cfg.half_length / 2
+        d = cfg.ball_diameter
+        row_dy = d * math.sqrt(3) / 2  # vertical offset per row
+
+        # Build rack: 5 rows, 8 ball fixed in center (row 2, position 1)
+        # Head ball is ball 1
+        remaining = list(range(2, 16))  # 2-15, excluding 8
+        remaining.remove(8)
+        random.shuffle(remaining)
+
+        rack = [
+            [1],                                           # row 0: head ball
+            [remaining.pop(), remaining.pop()],            # row 1
+            [remaining.pop(), 8, remaining.pop()],         # row 2: 8 in center
+            [remaining.pop() for _ in range(4)],           # row 3
+            [remaining.pop() for _ in range(5)],           # row 4
+        ]
+
+        # Draw back to front so front balls overlap
+        for row_idx in reversed(range(len(rack))):
+            row = rack[row_idx]
+            n_balls = len(row)
+            y = foot_y - row_idx * row_dy
+            for j, ball_num in enumerate(row):
+                x = foot_x + (j - (n_balls - 1) / 2) * d
+                self.draw_ball(draw, x, y, ball_num)
+
+        # Cue ball at head spot
+        self.draw_ball(draw, 0, cfg.half_length / 2, 0)
 
     # ========================================================================
     # SIDE POCKETS — fully self-contained, do not modify for corner work
