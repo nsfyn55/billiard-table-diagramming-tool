@@ -137,14 +137,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .palette-ball.placed { opacity: 0.3; }
 
   /* Table area */
+  #table-wrapper {
+    position: relative;
+    overflow: hidden;
+  }
   #table-container {
     position: relative;
     display: inline-block;
+    transform-origin: 0 0;
   }
   #table-img {
     display: block;
     max-height: 80vh;
     width: auto;
+  }
+
+  /* Crop selection overlay */
+  #crop-selection {
+    position: absolute;
+    border: 2px dashed rgba(255,200,50,0.9);
+    background: rgba(255,200,50,0.1);
+    pointer-events: none;
+    display: none;
+    z-index: 100;
   }
 
   /* Balls on table */
@@ -166,6 +181,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     justify-content: center;
   }
 
+  /* Side palette column */
+  #side-palettes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+    width: 180px;
+  }
+
   /* Side annotations palette */
   #annotations-palette {
     display: flex;
@@ -175,13 +199,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     padding: 10px 12px;
     border-radius: 8px;
     align-items: center;
-    width: 180px;
-    flex-shrink: 0;
   }
-  #annotations-palette .section-label {
+  #annotations-palette .section-label,
+  #tools-palette .section-label {
     font-size: 10px;
     color: #888;
     margin-bottom: 2px;
+  }
+
+  /* Other tools palette */
+  #tools-palette {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #2a2a2a;
+    padding: 10px 12px;
+    border-radius: 8px;
+    align-items: center;
+    width: 180px;
+    flex-shrink: 0;
+    margin-top: 8px;
   }
 
   /* Mode buttons */
@@ -301,23 +338,37 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     {% endfor %}
   </div>
   <div id="main-area">
-  <div id="annotations-palette">
-    <span class="section-label">Annotations</span>
-    <button class="mode-btn" id="path-mode-btn" title="Draw arrow paths (click and drag)">
-      <svg width="28" height="16" viewBox="0 0 28 16">
-        <line x1="2" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-dasharray="4,3"/>
-        <polygon points="24,8 18,4 18,12" fill="currentColor"/>
-      </svg>
-    </button>
-    <div class="palette-ghost" id="ghost-drag" draggable="true" title="Drag ghost ball onto table">
-      <svg width="36" height="36" viewBox="0 0 36 36">
-        <circle cx="18" cy="18" r="13" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-dasharray="4,3"/>
-      </svg>
+  <div id="side-palettes">
+    <div id="annotations-palette">
+      <span class="section-label">Annotations</span>
+      <button class="mode-btn" id="path-mode-btn" title="Draw arrow paths (click and drag)">
+        <svg width="28" height="16" viewBox="0 0 28 16">
+          <line x1="2" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-dasharray="4,3"/>
+          <polygon points="24,8 18,4 18,12" fill="currentColor"/>
+        </svg>
+      </button>
+      <div class="palette-ghost" id="ghost-drag" draggable="true" title="Drag ghost ball onto table">
+        <svg width="36" height="36" viewBox="0 0 36 36">
+          <circle cx="18" cy="18" r="13" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-dasharray="4,3"/>
+        </svg>
+      </div>
+    </div>
+    <div id="tools-palette">
+      <span class="section-label">Other Tools</span>
+      <button class="mode-btn" id="crop-mode-btn" title="Crop and zoom (drag to select region)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 2v4H2M6 6h12v12h4M18 22v-4h4M18 18H6V6"/>
+        </svg>
+      </button>
+      <button class="mode-btn" id="reset-zoom-btn" title="Reset zoom to full table" style="font-size:10px;padding:4px 6px;">Reset</button>
     </div>
   </div>
-  <div id="table-container">
-    <img id="table-img" src="data:image/png;base64,{{ table_image }}" />
-    <svg id="path-svg"></svg>
+  <div id="table-wrapper">
+    <div id="table-container">
+      <img id="table-img" src="data:image/png;base64,{{ table_image }}" />
+      <svg id="path-svg"></svg>
+      <div id="crop-selection"></div>
+    </div>
   </div>
   </div>
 </div>
@@ -424,6 +475,18 @@ document.querySelectorAll('.palette-ball').forEach(img => {
   });
 });
 
+// Convert screen coords to container-internal display coords
+function screenToContainer(clientX, clientY) {
+  const wrapperRect = tableWrapper.getBoundingClientRect();
+  // Position within the wrapper viewport
+  const wx = clientX - wrapperRect.left;
+  const wy = clientY - wrapperRect.top;
+  // Undo the CSS transform: scale and translate
+  const dispX = wx / zoomScale + zoomOffsetX;
+  const dispY = wy / zoomScale + zoomOffsetY;
+  return [dispX, dispY];
+}
+
 // Drop on table
 container.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -433,9 +496,7 @@ container.addEventListener('dragover', (e) => {
 container.addEventListener('drop', (e) => {
   e.preventDefault();
   const data = e.dataTransfer.getData('text/plain');
-  const rect = tableImg.getBoundingClientRect();
-  const dispX = e.clientX - rect.left;
-  const dispY = e.clientY - rect.top;
+  const [dispX, dispY] = screenToContainer(e.clientX, e.clientY);
   const [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
 
   if (data === 'ghost') {
@@ -589,8 +650,8 @@ function makeTableDraggable(el, entry) {
 
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
+    const dx = (e.clientX - startX) / zoomScale;
+    const dy = (e.clientY - startY) / zoomScale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
     el.style.left = (origLeft + dx) + 'px';
     el.style.top = (origTop + dy) + 'px';
@@ -621,6 +682,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     deselectAll();
     if (pathMode) togglePathMode(false);
+    if (cropMode) { cropMode = false; cropModeBtn.classList.remove('active'); container.style.cursor = ''; }
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     if (selectedGhost !== null) removeGhost(selectedGhost);
     else if (selectedPath !== null) removePath(selectedPath);
@@ -637,8 +699,8 @@ container.addEventListener('click', (e) => {
 
 // Mouse coords
 container.addEventListener('mousemove', (e) => {
-  const rect = tableImg.getBoundingClientRect();
-  const [tx, ty] = pxToTable(e.clientX - rect.left, e.clientY - rect.top);
+  const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+  const [tx, ty] = pxToTable(dx, dy);
   coordsEl.textContent = `(${tx}, ${ty})`;
 });
 
@@ -698,8 +760,8 @@ function makeGhostDraggable(el, entry) {
 
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
+    const dx = (e.clientX - startX) / zoomScale;
+    const dy = (e.clientY - startY) / zoomScale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
     el.style.left = (origLeft + dx) + 'px';
     el.style.top = (origTop + dy) + 'px';
@@ -745,14 +807,15 @@ container.addEventListener('mousedown', (e) => {
   if (e.target !== tableImg && !e.target.closest('#path-svg')) return;
   if (e.button !== 0) return;
 
-  const rect = tableImg.getBoundingClientRect();
-  const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+  const [tx, ty] = clampToTable(...pxToTable(dx, dy));
   const [px, py] = tableToPx(tx, ty);
 
   // Create temp line
+  const sw = 2 / zoomScale;
   const line = svgEl('line', {
     x1: px, y1: py, x2: px, y2: py,
-    stroke: 'white', 'stroke-width': 2, 'stroke-dasharray': '8,6',
+    stroke: 'white', 'stroke-width': sw, 'stroke-dasharray': `${8/zoomScale},${6/zoomScale}`,
     'pointer-events': 'none',
   });
   const arrow = svgEl('polygon', {
@@ -767,8 +830,8 @@ container.addEventListener('mousedown', (e) => {
 
 document.addEventListener('mousemove', (e) => {
   if (!pathDrawing) return;
-  const rect = tableImg.getBoundingClientRect();
-  const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+  const [tx, ty] = clampToTable(...pxToTable(dx, dy));
   const [px1, py1] = tableToPx(pathDrawing.tx1, pathDrawing.ty1);
   const [px2, py2] = tableToPx(tx, ty);
   pathDrawing.line.setAttribute('x2', px2);
@@ -778,8 +841,8 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mouseup', (e) => {
   if (!pathDrawing) return;
-  const rect = tableImg.getBoundingClientRect();
-  const [tx2, ty2] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  const [dx2, dy2] = screenToContainer(e.clientX, e.clientY);
+  const [tx2, ty2] = clampToTable(...pxToTable(dx2, dy2));
   // Remove temp elements
   pathDrawing.line.remove();
   pathDrawing.arrow.remove();
@@ -846,11 +909,12 @@ function createPath(x1, y1, x2, y2) {
 function renderPath(p) {
   const [px1, py1] = tableToPx(p.x1, p.y1);
   const [px2, py2] = tableToPx(p.x2, p.y2);
-  setAttrs(p.line, { x1: px1, y1: py1, x2: px2, y2: py2 });
-  setAttrs(p.hitarea, { x1: px1, y1: py1, x2: px2, y2: py2 });
+  const sw = 2 / zoomScale;
+  setAttrs(p.line, { x1: px1, y1: py1, x2: px2, y2: py2, 'stroke-width': sw, 'stroke-dasharray': `${8/zoomScale},${6/zoomScale}` });
+  setAttrs(p.hitarea, { x1: px1, y1: py1, x2: px2, y2: py2, 'stroke-width': 14 / zoomScale });
   p.arrow.setAttribute('points', arrowPoints(px1, py1, px2, py2));
-  setAttrs(p.h1, { cx: px1, cy: py1 });
-  setAttrs(p.h2, { cx: px2, cy: py2 });
+  setAttrs(p.h1, { cx: px1, cy: py1, r: 6 / zoomScale });
+  setAttrs(p.h2, { cx: px2, cy: py2, r: 6 / zoomScale });
 }
 
 function updatePathHandles(p, show) {
@@ -868,8 +932,8 @@ function setupHandleDrag(handle, p, which) {
   });
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const rect = tableImg.getBoundingClientRect();
-    const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+    const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+    const [tx, ty] = clampToTable(...pxToTable(dx, dy));
     if (which === 'start') { p.x1 = tx; p.y1 = ty; }
     else { p.x2 = tx; p.y2 = ty; }
     renderPath(p);
@@ -894,7 +958,7 @@ function arrowPoints(px1, py1, px2, py2) {
   const len = Math.sqrt(dx*dx + dy*dy);
   if (len < 1) return `${px2},${py2} ${px2},${py2} ${px2},${py2}`;
   const ux = dx/len, uy = dy/len;
-  const s = 10;
+  const s = 10 / zoomScale;
   const w1x = px2 - ux*s + (-uy)*s*0.5;
   const w1y = py2 - uy*s + (ux)*s*0.5;
   const w2x = px2 - ux*s - (-uy)*s*0.5;
@@ -923,6 +987,109 @@ function exportCLI() {
   output.textContent = parts.join(' \\\n  ');
 }
 
+// ========== CROP / ZOOM ==========
+const cropModeBtn = document.getElementById('crop-mode-btn');
+const resetZoomBtn = document.getElementById('reset-zoom-btn');
+const cropSelection = document.getElementById('crop-selection');
+const tableWrapper = document.getElementById('table-wrapper');
+let cropMode = false;
+let cropDragging = false;
+let cropStartX, cropStartY;
+
+// Current zoom state
+let zoomScale = 1;
+let zoomOffsetX = 0;
+let zoomOffsetY = 0;
+
+cropModeBtn.addEventListener('click', () => {
+  cropMode = !cropMode;
+  cropModeBtn.classList.toggle('active', cropMode);
+  if (pathMode) togglePathMode(false);
+  container.style.cursor = cropMode ? 'crosshair' : '';
+});
+
+resetZoomBtn.addEventListener('click', resetZoom);
+
+function resetZoom() {
+  zoomScale = 1;
+  zoomOffsetX = 0;
+  zoomOffsetY = 0;
+  applyZoom();
+}
+
+function applyZoom() {
+  container.style.transform = `scale(${zoomScale}) translate(${-zoomOffsetX}px, ${-zoomOffsetY}px)`;
+  // Set wrapper size to match original table display size
+  tableWrapper.style.width = tableImg.clientWidth + 'px';
+  tableWrapper.style.height = tableImg.clientHeight + 'px';
+}
+
+// Crop selection drawing
+container.addEventListener('mousedown', (e) => {
+  if (!cropMode) return;
+  if (e.button !== 0) return;
+  cropDragging = true;
+  [cropStartX, cropStartY] = screenToContainer(e.clientX, e.clientY);
+  cropSelection.style.display = 'block';
+  cropSelection.style.left = cropStartX + 'px';
+  cropSelection.style.top = cropStartY + 'px';
+  cropSelection.style.width = '0px';
+  cropSelection.style.height = '0px';
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!cropDragging) return;
+  const [curX, curY] = screenToContainer(e.clientX, e.clientY);
+  const x = Math.min(cropStartX, curX);
+  const y = Math.min(cropStartY, curY);
+  const w = Math.abs(curX - cropStartX);
+  const h = Math.abs(curY - cropStartY);
+  cropSelection.style.left = x + 'px';
+  cropSelection.style.top = y + 'px';
+  cropSelection.style.width = w + 'px';
+  cropSelection.style.height = h + 'px';
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (!cropDragging) return;
+  cropDragging = false;
+  cropSelection.style.display = 'none';
+
+  const [curX, curY] = screenToContainer(e.clientX, e.clientY);
+  const selX = Math.min(cropStartX, curX);
+  const selY = Math.min(cropStartY, curY);
+  const selW = Math.abs(curX - cropStartX);
+  const selH = Math.abs(curY - cropStartY);
+
+  // Only zoom if selection is meaningful
+  if (selW < 10 || selH < 10) return;
+
+  // Calculate zoom to fit selection width into the wrapper width
+  const wrapperW = parseFloat(tableWrapper.style.width) || tableImg.clientWidth;
+  const wrapperH = parseFloat(tableWrapper.style.height) || tableImg.clientHeight;
+
+  // Fit the selection into the wrapper, maintaining aspect ratio
+  const fitScale = Math.min(wrapperW / selW, wrapperH / selH);
+  const newZoom = zoomScale * fitScale;
+
+  // The selection top-left in the current container coords (pre-transform)
+  // needs to become the top-left of the wrapper
+  const newOffsetX = zoomOffsetX + selX;
+  const newOffsetY = zoomOffsetY + selY;
+
+  zoomScale = newZoom;
+  zoomOffsetX = newOffsetX;
+  zoomOffsetY = newOffsetY;
+  applyZoom();
+
+  // Exit crop mode
+  cropMode = false;
+  cropModeBtn.classList.remove('active');
+  container.style.cursor = '';
+});
+
 // Reposition on resize
 window.addEventListener('resize', () => {
   updateScale();
@@ -930,6 +1097,7 @@ window.addEventListener('resize', () => {
   Object.values(placedBalls).forEach(positionBall);
   ghosts.forEach(positionGhost);
   paths.forEach(renderPath);
+  if (zoomScale !== 1) applyZoom();
 });
 </script>
 </body>
