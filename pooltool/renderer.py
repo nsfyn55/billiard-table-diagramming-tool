@@ -208,13 +208,10 @@ class TableRenderer:
         for cx, cy, rot in corners:
             self._draw_corner_pocket(draw, cx, cy, cpr / 2, rot)
 
-        # Side pockets - U-shapes opening toward the rail
-        # The curve's deepest point (toward center table) is flush with the cushion nose
+        # Side pockets - stadium shape (semicircle + short rect + mirrored semicircle)
         cw = cfg.cushion_width
-        # Left side: cushion nose at x = -hw + cw, curve tip there, U opens left
-        self._draw_corner_pocket(draw, -hw + cw - spr, 0, spr, 270)
-        # Right side: cushion nose at x = hw - cw, curve tip there, U opens right
-        self._draw_corner_pocket(draw, hw - cw + spr, 0, spr, 90)
+        self._draw_side_pocket_stadium(draw, -hw + cw - spr, 0, spr, 270)
+        self._draw_side_pocket_stadium(draw, hw - cw + spr, 0, spr, 90)
 
     def _draw_corner_pocket(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
                             radius: float, rotation_deg: float):
@@ -264,10 +261,50 @@ class TableRenderer:
 
         draw.polygon(rotated, fill=POCKET_BLACK)
 
-    def _draw_side_pocket(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
-                          radius: float, start_angle: float):
-        """Draw a side pocket as a semicircle opening into the table."""
+    def _draw_side_pocket_stadium(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
+                                   radius: float, rotation_deg: float):
+        """Draw a side pocket as a stadium: semicircle + short rect + mirrored semicircle.
+
+        Same center/radius/rotation as the U-shape, but with a second semicircle
+        at the open end and a squished rectangle between them.
+        """
         px, py = self.table_to_pixel(table_x, table_y)
         r_px = radius * self.ppi
-        bbox = [px - r_px, py - r_px, px + r_px, py + r_px]
-        draw.pieslice(bbox, start_angle, start_angle + 180, fill=POCKET_BLACK)
+        outer_r_px = r_px * 0.7  # outer semicircle (back of pocket)
+        rect_height = r_px * 0.1   # short rectangle between the two semicircles
+        num_arc_points = 30
+        points = []
+
+        # Inner semicircle (felt side, same width as pocket opening) — at y=0
+        for i in range(num_arc_points + 1):
+            angle = math.pi - (math.pi * i / num_arc_points)  # pi -> 0
+            ax = r_px * math.cos(angle)
+            ay = r_px * math.sin(angle)
+            points.append((ax, ay))
+
+        # Right wall going up to the outer semicircle
+        points.append((r_px, -rect_height))
+
+        # Outer semicircle (rail side, smaller) — at y=-rect_height
+        for i in range(num_arc_points + 1):
+            angle = -(math.pi * i / num_arc_points)  # 0 -> -pi
+            # Same width (r_px) at the connection, but the curve is shallower
+            ax = r_px * math.cos(angle)
+            ay = -rect_height + outer_r_px * math.sin(angle)
+            points.append((ax, ay))
+
+        # Left wall going back down
+        points.append((-r_px, 0))
+
+        # Rotate all points
+        rot_rad = math.radians(rotation_deg)
+        cos_r = math.cos(rot_rad)
+        sin_r = math.sin(rot_rad)
+
+        rotated = []
+        for x, y in points:
+            rx = x * cos_r - y * sin_r
+            ry = x * sin_r + y * cos_r
+            rotated.append((px + rx, py + ry))
+
+        draw.polygon(rotated, fill=POCKET_BLACK)
