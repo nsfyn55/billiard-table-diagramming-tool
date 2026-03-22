@@ -11,6 +11,7 @@ FELT_GREEN = (0, 100, 0)
 RAIL_BROWN = (101, 67, 33)
 POCKET_BLACK = (20, 20, 20)
 CUSHION_GREEN = (34, 139, 34)
+DIAMOND_WHITE = (220, 200, 160)
 
 
 class TableRenderer:
@@ -49,6 +50,8 @@ class TableRenderer:
         draw = ImageDraw.Draw(img)
 
         self._draw_felt(draw)
+        self._draw_spots(draw)
+        self._draw_debug_ball(draw)
 
         # Pockets first
         self._draw_side_pockets(draw)
@@ -62,6 +65,9 @@ class TableRenderer:
         self._draw_side_cushions(draw)
         self._draw_corner_cushions(draw)
 
+        # Diamonds on top of rails
+        self._draw_diamonds(draw)
+
         return img
 
     def _draw_felt(self, draw: ImageDraw.Draw):
@@ -69,6 +75,45 @@ class TableRenderer:
         x0, y0 = self.table_to_pixel(-self.config.half_width, self.config.half_length)
         x1, y1 = self.table_to_pixel(self.config.half_width, -self.config.half_length)
         draw.rectangle([x0, y0, x1, y1], fill=FELT_GREEN)
+
+    def _draw_spots(self, draw: ImageDraw.Draw):
+        """Draw the foot spot and head spot with gradient shading."""
+        cfg = self.config
+        hl = cfg.half_length
+
+        # Spots at 1/4 length from each end
+        foot_spot = (0, -hl / 2)
+        head_spot = (0, hl / 2)
+
+        spot_radius = 0.5  # inches (1-inch diameter spot)
+
+        for sx, sy in [foot_spot, head_spot]:
+            px, py = self.table_to_pixel(sx, sy)
+            r_outer = spot_radius * self.ppi
+            r_body = r_outer * 0.7
+            r_center = r_outer * 0.25
+
+            # Outer border ring
+            draw.ellipse(
+                [px - r_outer, py - r_outer, px + r_outer, py + r_outer],
+                fill=(60, 60, 60))
+            # Main body
+            draw.ellipse(
+                [px - r_body, py - r_body, px + r_body, py + r_body],
+                fill=(120, 120, 120))
+            # Center point
+            draw.ellipse(
+                [px - r_center, py - r_center, px + r_center, py + r_center],
+                fill=(20, 20, 20))
+
+    def _draw_debug_ball(self, draw: ImageDraw.Draw):
+        """Draw a single ball at the foot spot for scale reference."""
+        cfg = self.config
+        px, py = self.table_to_pixel(0, -cfg.half_length / 2)
+        r = cfg.ball_radius * self.ppi
+        draw.ellipse([px - r, py - r, px + r, py + r], fill=(255, 255, 255))
+        # Slight shadow/outline
+        draw.ellipse([px - r, py - r, px + r, py + r], outline=(180, 180, 180))
 
     # ========================================================================
     # SIDE POCKETS — fully self-contained, do not modify for corner work
@@ -253,6 +298,51 @@ class TableRenderer:
             rail_end=(hw - corner_gap, -hl),
             inward_direction=(0, 1),
             cushion_width=cw, taper=taper, start_taper=corner_taper, end_taper=corner_taper)
+
+    def _draw_diamonds(self, draw: ImageDraw.Draw):
+        """Draw diamond sights on the rails."""
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        cw = cfg.cushion_width
+
+        # Diamond spacing: length/8 along long rails, width/4 along short rails
+        # These are equal on standard tables (length = 2 * width)
+        long_spacing = cfg.playing_surface_length / 8
+        short_spacing = cfg.playing_surface_width / 4
+
+        # Diamond position on the rail: halfway between outer table edge and cushion edge
+        rail_center = self.rail_width / 2
+        diamond_size = 0.4  # inches, half-width of the diamond shape
+
+        # Long rails: 3 diamonds on each side of the side pocket (skip i=4, that's the pocket)
+        for i in range(1, 8):
+            if i == 4:  # side pocket position
+                continue
+            y = -hl + i * long_spacing
+            for sign in [-1, 1]:
+                x = sign * (hw + rail_center)
+                self._draw_diamond(draw, x, y, diamond_size)
+
+        # Short rails: 3 diamonds on each
+        for i in range(1, 4):
+            x = -hw + i * short_spacing
+            for sign in [-1, 1]:
+                y = sign * (hl + rail_center)
+                self._draw_diamond(draw, x, y, diamond_size)
+
+    def _draw_diamond(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
+                       size: float):
+        """Draw a single diamond shape (rotated square) at the given table position."""
+        px, py = self.table_to_pixel(table_x, table_y)
+        s = size * self.ppi
+        points = [
+            (px, py - s),   # top
+            (px + s, py),   # right
+            (px, py + s),   # bottom
+            (px - s, py),   # left
+        ]
+        draw.polygon(points, fill=DIAMOND_WHITE)
 
     def _draw_cushion_segment(self, draw: ImageDraw.Draw,
                                rail_start: tuple[float, float],
