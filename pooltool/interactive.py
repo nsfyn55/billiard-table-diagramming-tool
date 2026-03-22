@@ -140,6 +140,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   #table-wrapper {
     position: relative;
     overflow: hidden;
+    flex: 1;
+    display: flex;
+    justify-content: center;
   }
   #table-container {
     position: relative;
@@ -179,6 +182,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     gap: 10px;
     align-items: flex-start;
     justify-content: center;
+    width: 100%;
   }
 
   /* Side palette column */
@@ -188,6 +192,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     gap: 8px;
     flex-shrink: 0;
     width: 180px;
+    margin-right: auto;
   }
 
   /* Side annotations palette */
