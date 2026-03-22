@@ -482,13 +482,13 @@ document.querySelectorAll('.palette-ball').forEach(img => {
 
 // Convert screen coords to container-internal display coords
 function screenToContainer(clientX, clientY) {
-  const wrapperRect = tableWrapper.getBoundingClientRect();
-  // Position within the wrapper viewport
-  const wx = clientX - wrapperRect.left;
-  const wy = clientY - wrapperRect.top;
-  // Undo the CSS transform: scale and translate
-  const dispX = wx / zoomScale + zoomOffsetX;
-  const dispY = wy / zoomScale + zoomOffsetY;
+  const containerRect = container.getBoundingClientRect();
+  // Position within the scaled container
+  const cx = clientX - containerRect.left;
+  const cy = clientY - containerRect.top;
+  // Undo the CSS transform scale
+  const dispX = cx / zoomScale;
+  const dispY = cy / zoomScale;
   return [dispX, dispY];
 }
 
