@@ -49,9 +49,18 @@ class TableRenderer:
         draw = ImageDraw.Draw(img)
 
         self._draw_felt(draw)
-        self._draw_pockets(draw)
-        self._draw_cushions(draw)
-        self._draw_pocket_rail_covers(draw)
+
+        # Pockets first
+        self._draw_side_pockets(draw)
+        self._draw_corner_pockets(draw)
+
+        # Covers on top of pockets
+        self._draw_side_pocket_covers(draw)
+        self._draw_corner_pocket_covers(draw)
+
+        # Cushions last, on top of everything
+        self._draw_side_cushions(draw)
+        self._draw_corner_cushions(draw)
 
         return img
 
@@ -61,100 +70,206 @@ class TableRenderer:
         x1, y1 = self.table_to_pixel(self.config.half_width, -self.config.half_length)
         draw.rectangle([x0, y0, x1, y1], fill=FELT_GREEN)
 
-    def _draw_pocket_rail_covers(self, draw: ImageDraw.Draw):
+    # ========================================================================
+    # SIDE POCKETS — fully self-contained, do not modify for corner work
+    # ========================================================================
+
+    def _draw_side_pocket_covers(self, draw: ImageDraw.Draw):
         """Draw brown rectangles flanking each side pocket to define the opening width."""
         cfg = self.config
         hw = cfg.half_width
         cw = cfg.cushion_width
         spr = cfg.side_pocket_width / 2
         taper = cw * 0.5
-        # How wide the visible pocket opening is (half-width from center)
-        opening_half = spr - taper  # flush with cushion points cutting into pocket
-        cover_extent = spr + 2.0   # how far the cover extends beyond the pocket
+        opening_half = spr - taper
+        cover_extent = spr + 2.0
 
         for side_x, rail_outer_x in [(-hw, -hw - self.rail_width - 1),
                                       (hw, hw + self.rail_width + 1)]:
-            # Upper flank
             x0, y0 = self.table_to_pixel(min(side_x, rail_outer_x), cover_extent)
             x1, y1 = self.table_to_pixel(max(side_x, rail_outer_x), opening_half)
             draw.rectangle([x0, y0, x1, y1], fill=RAIL_BROWN)
 
-            # Lower flank
             x0, y0 = self.table_to_pixel(min(side_x, rail_outer_x), -opening_half)
             x1, y1 = self.table_to_pixel(max(side_x, rail_outer_x), -cover_extent)
             draw.rectangle([x0, y0, x1, y1], fill=RAIL_BROWN)
 
-    def _draw_cushions(self, draw: ImageDraw.Draw):
-        """Draw the 6 cushion segments with triangular endpoints near pockets."""
+    def _draw_side_pockets(self, draw: ImageDraw.Draw):
+        """Draw the two side pockets as stadium shapes."""
+        cfg = self.config
+        hw = cfg.half_width
+        cw = cfg.cushion_width
+        spr = cfg.side_pocket_width / 2
+        self._draw_side_pocket_stadium(draw, -hw + cw - spr, 0, spr, 270)
+        self._draw_side_pocket_stadium(draw, hw - cw + spr, 0, spr, 90)
+
+    def _draw_side_cushions(self, draw: ImageDraw.Draw):
+        """Draw the 4 cushion segments along the long rails (split by side pockets)."""
         cfg = self.config
         hw = cfg.half_width
         hl = cfg.half_length
         cw = cfg.cushion_width
-        # How far from the corner/side pocket center the cushion starts
-        corner_gap = cfg.corner_pocket_width / 2 - 1.0  # overlap into corner pocket
-        # side_gap: where the rail edge ends near the pocket
-        # taper: how far back from rail_end the inner tip sits
-        # tip lands at side_gap + taper, so set side_gap = spr - taper for tip at pocket edge
+        corner_gap = cfg.corner_pocket_width * 0.55
         spr = cfg.side_pocket_width / 2
         taper = cw * 0.5
-        side_gap = spr - taper  # taper tip lands right at the pocket edge
+        side_gap = spr - taper
 
-        # Top rail: one segment across the top, between the two corner pockets
-        # Runs from left corner pocket to right corner pocket
-        self._draw_cushion_segment(draw,
-            rail_start=(-hw + corner_gap, hl),  # left end (near left corner pocket)
-            rail_end=(hw - corner_gap, hl),      # right end (near right corner pocket)
-            inward_direction=(0, -1),             # cushion extends downward (into table)
-            cushion_width=cw, taper=taper)
-
-        # Bottom rail: one segment across the bottom
-        self._draw_cushion_segment(draw,
-            rail_start=(-hw + corner_gap, -hl),
-            rail_end=(hw - corner_gap, -hl),
-            inward_direction=(0, 1),
-            cushion_width=cw, taper=taper)
-
-        # Left rail top half: from top-left corner pocket down to left side pocket
+        # Left rail top half (start near corner, end near side pocket)
         self._draw_cushion_segment(draw,
             rail_start=(-hw, hl - corner_gap),
             rail_end=(-hw, side_gap),
             inward_direction=(1, 0),
-            cushion_width=cw, taper=taper)
+            cushion_width=cw, taper=taper, start_taper=cw)
 
-        # Left rail bottom half: from left side pocket down to bottom-left corner pocket
+        # Left rail bottom half (start near side pocket, end near corner)
         self._draw_cushion_segment(draw,
             rail_start=(-hw, -side_gap),
             rail_end=(-hw, -hl + corner_gap),
             inward_direction=(1, 0),
-            cushion_width=cw, taper=taper)
+            cushion_width=cw, taper=taper, end_taper=cw)
 
-        # Right rail top half
+        # Right rail top half (start near corner, end near side pocket)
         self._draw_cushion_segment(draw,
             rail_start=(hw, hl - corner_gap),
             rail_end=(hw, side_gap),
             inward_direction=(-1, 0),
-            cushion_width=cw, taper=taper)
+            cushion_width=cw, taper=taper, start_taper=cw)
 
-        # Right rail bottom half
+        # Right rail bottom half (start near side pocket, end near corner)
         self._draw_cushion_segment(draw,
             rail_start=(hw, -side_gap),
             rail_end=(hw, -hl + corner_gap),
             inward_direction=(-1, 0),
-            cushion_width=cw, taper=taper)
+            cushion_width=cw, taper=taper, end_taper=cw)
+
+    # ========================================================================
+    # CORNER POCKETS
+    # ========================================================================
+
+    def _draw_corner_pockets(self, draw: ImageDraw.Draw):
+        """Draw the four corner pockets as stadium shapes at 45° angles.
+
+        Same shape as side pockets, oriented so the elongation axis bisects
+        the 90° corner into two 45° angles. Positioned at the corner point.
+        """
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        cpr = cfg.corner_pocket_width / 2  # pocket radius
+
+        # Shift pocket center along 45° bisection toward playing surface
+        inset = cpr * 0.55
+        d = inset / math.sqrt(2)  # x and y components of 45° shift
+        corners = [
+            (-hw + d, -hl + d, 225),   # bottom-left
+            (hw - d, -hl + d, 315),    # bottom-right
+            (hw - d, hl - d, 45),      # top-right
+            (-hw + d, hl - d, 135),    # top-left
+        ]
+        for cx, cy, rot in corners:
+            self._draw_side_pocket_stadium(draw, cx, cy, cpr, rot)
+
+    def _draw_corner_pocket_covers(self, draw: ImageDraw.Draw):
+        """Draw rotated rectangles flanking each corner pocket opening.
+
+        Positioned flush with the cushion taper points at each corner.
+        """
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        cpr = cfg.corner_pocket_width / 2
+        corner_gap = cfg.corner_pocket_width * 0.55
+        inset = cpr * 0.55
+        d = inset / math.sqrt(2)
+
+        # Perpendicular distance from pocket center to cushion endpoint
+        perp_dist = corner_gap / math.sqrt(2)
+
+        corners = [
+            (-hw + d, -hl + d, 225),
+            (hw - d, -hl + d, 315),
+            (hw - d, hl - d, 45),
+            (-hw + d, hl - d, 135),
+        ]
+        for cx, cy, rot in corners:
+            self._draw_rotated_flank(draw, cx, cy, cpr, rot, perp_dist)
+
+    def _draw_rotated_flank(self, draw: ImageDraw.Draw, cx: float, cy: float,
+                             pocket_radius: float, rotation_deg: float,
+                             perp_dist: float):
+        """Draw two rotated flanking rectangles on either side of a corner pocket opening."""
+        px, py = self.table_to_pixel(cx, cy)
+        r_px = pocket_radius * self.ppi
+        perp_dist_px = perp_dist * self.ppi
+        rot_rad = math.radians(rotation_deg)
+        cos_r = math.cos(rot_rad)
+        sin_r = math.sin(rot_rad)
+
+        flank_length = r_px * 2.0
+        flank_width = r_px * 0.5
+
+        for side in [-1, 1]:
+            # Inner edge flush with cushion taper point, extending outward
+            perp_offset = side * (perp_dist_px + flank_width / 2)
+
+            hw_local = flank_width / 2
+            hh_local = flank_length / 2
+            rect_points = [
+                (perp_offset - hw_local, -hh_local),
+                (perp_offset + hw_local, -hh_local),
+                (perp_offset + hw_local, hh_local),
+                (perp_offset - hw_local, hh_local),
+            ]
+
+            rotated = []
+            for x, y in rect_points:
+                rx = x * cos_r - y * sin_r
+                ry = x * sin_r + y * cos_r
+                rotated.append((px + rx, py + ry))
+
+            draw.polygon(rotated, fill=RAIL_BROWN)
+
+    def _draw_corner_cushions(self, draw: ImageDraw.Draw):
+        """Draw the 2 cushion segments along the short rails (top and bottom)."""
+        cfg = self.config
+        hw = cfg.half_width
+        hl = cfg.half_length
+        cw = cfg.cushion_width
+        corner_gap = cfg.corner_pocket_width * 0.55
+        taper = cw * 0.5
+
+        # Top rail (both ends near corners)
+        self._draw_cushion_segment(draw,
+            rail_start=(-hw + corner_gap, hl),
+            rail_end=(hw - corner_gap, hl),
+            inward_direction=(0, -1),
+            cushion_width=cw, taper=taper, start_taper=cw, end_taper=cw)
+
+        # Bottom rail (both ends near corners)
+        self._draw_cushion_segment(draw,
+            rail_start=(-hw + corner_gap, -hl),
+            rail_end=(hw - corner_gap, -hl),
+            inward_direction=(0, 1),
+            cushion_width=cw, taper=taper, start_taper=cw, end_taper=cw)
 
     def _draw_cushion_segment(self, draw: ImageDraw.Draw,
                                rail_start: tuple[float, float],
                                rail_end: tuple[float, float],
                                inward_direction: tuple[float, float],
-                               cushion_width: float, taper: float):
+                               cushion_width: float, taper: float,
+                               start_taper: float | None = None,
+                               end_taper: float | None = None):
         """Draw a single cushion segment as a polygon with tapered triangle ends.
 
         The cushion runs along the rail from rail_start to rail_end.
-        It extends inward by cushion_width. The ends taper to a point
-        over the length of `taper` inches.
-
-        The shape is: triangle point at start -> full width body -> triangle point at end
+        It extends inward by cushion_width. The ends taper to a point.
+        start_taper/end_taper override taper at each end independently.
         """
+        if start_taper is None:
+            start_taper = taper
+        if end_taper is None:
+            end_taper = taper
+
         dx = inward_direction[0]
         dy = inward_direction[1]
 
@@ -165,20 +280,14 @@ class TableRenderer:
         rdx = rail_dx / rail_len  # unit vector along rail
         rdy = rail_dy / rail_len
 
-        # Points along the rail edge (outer edge)
         rs = rail_start
         re = rail_end
 
-        # Points along the inner edge (shifted inward by cushion_width)
-        # But tapered at the ends
-        # Start taper point (triangle tip) — on the inner edge at start
-        start_tip = (rs[0] + dx * cushion_width + rdx * taper,
-                     rs[1] + dy * cushion_width + rdy * taper)
-        # End taper point (triangle tip) — on the inner edge at end
-        end_tip = (re[0] + dx * cushion_width - rdx * taper,
-                   re[1] + dy * cushion_width - rdy * taper)
+        start_tip = (rs[0] + dx * cushion_width + rdx * start_taper,
+                     rs[1] + dy * cushion_width + rdy * start_taper)
+        end_tip = (re[0] + dx * cushion_width - rdx * end_taper,
+                   re[1] + dy * cushion_width - rdy * end_taper)
 
-        # Full polygon: rail_start -> start_tip (inner) -> end_tip (inner) -> rail_end
         points = [
             self.table_to_pixel(*rs),
             self.table_to_pixel(*start_tip),
@@ -187,31 +296,6 @@ class TableRenderer:
         ]
 
         draw.polygon(points, fill=CUSHION_GREEN)
-
-    def _draw_pockets(self, draw: ImageDraw.Draw):
-        """Draw all six pockets."""
-        cfg = self.config
-        hw = cfg.half_width
-        hl = cfg.half_length
-        cpr = cfg.corner_pocket_width      # corner pocket radius (full width)
-        spr = cfg.side_pocket_width / 2    # side pocket radius
-
-        # Corner pockets - U-shapes at 45° angles
-        # rotation_deg: 0=opens down in pixel space (up on table)
-        corner_offset = cpr / 2 * 0.3
-        corners = [
-            (-hw - corner_offset, -hl - corner_offset, 225),   # bottom-left: opens toward top-right
-            (hw + corner_offset, -hl - corner_offset, 315),    # bottom-right: opens toward top-left
-            (hw + corner_offset, hl + corner_offset, 45),      # top-right: opens toward bottom-left
-            (-hw - corner_offset, hl + corner_offset, 135),    # top-left: opens toward bottom-right
-        ]
-        for cx, cy, rot in corners:
-            self._draw_corner_pocket(draw, cx, cy, cpr / 2, rot)
-
-        # Side pockets - stadium shape (semicircle + short rect + mirrored semicircle)
-        cw = cfg.cushion_width
-        self._draw_side_pocket_stadium(draw, -hw + cw - spr, 0, spr, 270)
-        self._draw_side_pocket_stadium(draw, hw - cw + spr, 0, spr, 90)
 
     def _draw_corner_pocket(self, draw: ImageDraw.Draw, table_x: float, table_y: float,
                             radius: float, rotation_deg: float):
