@@ -141,13 +141,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     position: relative;
     overflow: hidden;
     flex: 1;
-    display: flex;
-    justify-content: center;
   }
   #table-container {
     position: relative;
     display: inline-block;
     transform-origin: 0 0;
+    margin: 0 auto;
   }
   #table-img {
     display: block;
@@ -1005,6 +1004,8 @@ let cropStartX, cropStartY;
 let zoomScale = 1;
 let zoomOffsetX = 0;
 let zoomOffsetY = 0;
+let zoomSelW = 0;
+let zoomSelH = 0;
 
 cropModeBtn.addEventListener('click', () => {
   cropMode = !cropMode;
@@ -1024,9 +1025,16 @@ function resetZoom() {
 
 function applyZoom() {
   container.style.transform = `scale(${zoomScale}) translate(${-zoomOffsetX}px, ${-zoomOffsetY}px)`;
-  // Set wrapper size to match original table display size
-  tableWrapper.style.width = tableImg.clientWidth + 'px';
-  tableWrapper.style.height = tableImg.clientHeight + 'px';
+  if (zoomScale === 1) {
+    tableWrapper.style.width = '';
+    tableWrapper.style.height = '';
+    container.style.margin = '0 auto';
+  } else {
+    // Size wrapper to exactly fit the selected region scaled up
+    tableWrapper.style.width = (zoomSelW * zoomScale) + 'px';
+    tableWrapper.style.height = (zoomSelH * zoomScale) + 'px';
+    container.style.margin = '0';
+  }
   paths.forEach(renderPath);
 }
 
@@ -1072,18 +1080,21 @@ document.addEventListener('mouseup', (e) => {
   // Only zoom if selection is meaningful
   if (selW < 10 || selH < 10) return;
 
-  // Calculate zoom to fit selection width into the wrapper width
-  const wrapperW = parseFloat(tableWrapper.style.width) || tableImg.clientWidth;
-  const wrapperH = parseFloat(tableWrapper.style.height) || tableImg.clientHeight;
+  // Scale to fill horizontal space, but cap height at viewport
+  const availableW = tableWrapper.parentElement.clientWidth;
+  const maxH = window.innerHeight * 0.75; // cap at 75% viewport height
+  const hScale = availableW / selW;
+  const vScale = maxH / selH;
+  const fitScale = Math.min(hScale, vScale);
+  const newZoom = fitScale;
 
-  // Fit the selection into the wrapper, maintaining aspect ratio
-  const fitScale = Math.min(wrapperW / selW, wrapperH / selH);
-  const newZoom = zoomScale * fitScale;
+  // The selection top-left becomes the new offset
+  const newOffsetX = selX;
+  const newOffsetY = selY;
 
-  // The selection top-left in the current container coords (pre-transform)
-  // needs to become the top-left of the wrapper
-  const newOffsetX = zoomOffsetX + selX;
-  const newOffsetY = zoomOffsetY + selY;
+  // Store the selected region dimensions for wrapper sizing
+  zoomSelW = selW;
+  zoomSelH = selH;
 
   zoomScale = newZoom;
   zoomOffsetX = newOffsetX;
