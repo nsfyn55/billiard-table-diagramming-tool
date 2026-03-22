@@ -42,7 +42,7 @@ TABLES = {
         playing_surface_length=78.0,
         ball_diameter=2.25,
         corner_pocket_width=4.95,
-        side_pocket_width=5.0,
+        side_pocket_width=5.25,
         cushion_width=2.0,
     ),
     "8foot": TableConfig(
@@ -51,7 +51,7 @@ TABLES = {
         playing_surface_length=88.0,
         ball_diameter=2.25,
         corner_pocket_width=5.225,
-        side_pocket_width=5.25,
+        side_pocket_width=5.5125,
         cushion_width=2.0,
     ),
     "9foot": TableConfig(
@@ -60,7 +60,7 @@ TABLES = {
         playing_surface_length=100.0,
         ball_diameter=2.25,
         corner_pocket_width=5.5,
-        side_pocket_width=5.5,
+        side_pocket_width=5.775,
         cushion_width=2.0,
     ),
 }

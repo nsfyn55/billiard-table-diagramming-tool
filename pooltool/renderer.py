@@ -80,7 +80,7 @@ class TableRenderer:
         hw = cfg.half_width
         cw = cfg.cushion_width
         spr = cfg.side_pocket_width / 2
-        taper = cw * 0.5
+        taper = cw * 0.5 / 1.33
         opening_half = spr - taper
         cover_extent = spr + 2.0
 
@@ -111,7 +111,8 @@ class TableRenderer:
         cw = cfg.cushion_width
         corner_gap = cfg.corner_pocket_width * 0.55
         spr = cfg.side_pocket_width / 2
-        taper = cw * 0.5
+        taper = cw * 0.5 / 1.33
+        corner_taper = cw
         side_gap = spr - taper
 
         # Left rail top half (start near corner, end near side pocket)
@@ -119,28 +120,28 @@ class TableRenderer:
             rail_start=(-hw, hl - corner_gap),
             rail_end=(-hw, side_gap),
             inward_direction=(1, 0),
-            cushion_width=cw, taper=taper, start_taper=cw)
+            cushion_width=cw, taper=taper, start_taper=corner_taper)
 
         # Left rail bottom half (start near side pocket, end near corner)
         self._draw_cushion_segment(draw,
             rail_start=(-hw, -side_gap),
             rail_end=(-hw, -hl + corner_gap),
             inward_direction=(1, 0),
-            cushion_width=cw, taper=taper, end_taper=cw)
+            cushion_width=cw, taper=taper, end_taper=corner_taper)
 
         # Right rail top half (start near corner, end near side pocket)
         self._draw_cushion_segment(draw,
             rail_start=(hw, hl - corner_gap),
             rail_end=(hw, side_gap),
             inward_direction=(-1, 0),
-            cushion_width=cw, taper=taper, start_taper=cw)
+            cushion_width=cw, taper=taper, start_taper=corner_taper)
 
         # Right rail bottom half (start near side pocket, end near corner)
         self._draw_cushion_segment(draw,
             rail_start=(hw, -side_gap),
             rail_end=(hw, -hl + corner_gap),
             inward_direction=(-1, 0),
-            cushion_width=cw, taper=taper, end_taper=cw)
+            cushion_width=cw, taper=taper, end_taper=corner_taper)
 
     # ========================================================================
     # CORNER POCKETS
@@ -237,20 +238,21 @@ class TableRenderer:
         cw = cfg.cushion_width
         corner_gap = cfg.corner_pocket_width * 0.55
         taper = cw * 0.5
+        corner_taper = cw
 
         # Top rail (both ends near corners)
         self._draw_cushion_segment(draw,
             rail_start=(-hw + corner_gap, hl),
             rail_end=(hw - corner_gap, hl),
             inward_direction=(0, -1),
-            cushion_width=cw, taper=taper, start_taper=cw, end_taper=cw)
+            cushion_width=cw, taper=taper, start_taper=corner_taper, end_taper=corner_taper)
 
         # Bottom rail (both ends near corners)
         self._draw_cushion_segment(draw,
             rail_start=(-hw + corner_gap, -hl),
             rail_end=(hw - corner_gap, -hl),
             inward_direction=(0, 1),
-            cushion_width=cw, taper=taper, start_taper=cw, end_taper=cw)
+            cushion_width=cw, taper=taper, start_taper=corner_taper, end_taper=corner_taper)
 
     def _draw_cushion_segment(self, draw: ImageDraw.Draw,
                                rail_start: tuple[float, float],
