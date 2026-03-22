@@ -152,6 +152,42 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     filter: drop-shadow(0 0 6px rgba(255,255,255,0.9));
   }
 
+  /* Path mode button */
+  .mode-btn {
+    background: #333;
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 12px;
+    align-self: center;
+  }
+  .mode-btn:hover { background: #444; }
+  .mode-btn.active { background: #665522; border-color: #aa8833; color: #fff; }
+
+  /* Path SVG overlay */
+  #path-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  #path-svg .path-line { pointer-events: stroke; cursor: pointer; }
+  #path-svg .path-arrow { pointer-events: fill; cursor: pointer; }
+  #path-svg .path-hitarea { pointer-events: stroke; cursor: pointer; }
+  #path-svg .path-handle {
+    pointer-events: all;
+    cursor: grab;
+    fill: rgba(255,255,255,0.9);
+    stroke: #333;
+    stroke-width: 1.5;
+  }
+  #path-svg .path-handle:hover { fill: #ffcc00; }
+  #path-svg .path-group.selected .path-line { stroke: rgba(255,200,50,0.9); }
+  #path-svg .path-group.selected .path-arrow { fill: rgba(255,200,50,0.9); }
+
   /* Output */
   #output {
     margin-top: 10px;
@@ -208,19 +244,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   {% for n in range(9, 16) %}
   <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
   {% endfor %}
+  <button class="mode-btn" id="path-mode-btn" title="Draw arrow paths (click and drag)">&#x27B6; Path</button>
 </div>
 
 <div id="table-container">
   <img id="table-img" src="data:image/png;base64,{{ table_image }}" />
+  <svg id="path-svg"></svg>
 </div>
 
 <div id="output">Drag balls from the palette onto the table. Click to select, Delete to remove, Esc to deselect.</div>
 <div id="coords"></div>
 <div id="help">
-  Drag from palette to place<br>
-  Drag on table to move<br>
-  Click to select &middot; Delete to remove<br>
-  Esc to deselect
+  Drag from palette to place balls<br>
+  Path mode: click+drag to draw arrows<br>
+  Click to select &middot; Drag handles to adjust<br>
+  Delete to remove &middot; Esc to deselect
 </div>
 
 <script>
@@ -236,8 +274,6 @@ let scale = 1;
 function updateScale() {
   scale = tableImg.clientWidth / M.img_width;
 }
-tableImg.onload = updateScale;
-window.addEventListener('resize', updateScale);
 setTimeout(updateScale, 100);
 
 // Coordinate conversion
@@ -297,6 +333,13 @@ function ballDisplaySize() {
 // { ballNum: { el, tx, ty } }
 const placedBalls = {};
 let selectedBall = null;
+
+// State: paths (arrows)
+const paths = []; // { id, x1, y1, x2, y2, group }
+let nextPathId = 0;
+let selectedPath = null;
+let pathMode = false;
+const pathSvg = document.getElementById('path-svg');
 
 // --- Palette drag ---
 document.querySelectorAll('.palette-ball').forEach(img => {
@@ -374,13 +417,20 @@ function positionBall(entry) {
 }
 
 function selectBall(num) {
-  // Deselect previous
-  if (selectedBall !== null && placedBalls[selectedBall]) {
-    placedBalls[selectedBall].el.classList.remove('selected');
-  }
+  deselectAll();
   selectedBall = num;
   if (placedBalls[num]) {
     placedBalls[num].el.classList.add('selected');
+  }
+}
+
+function selectPath(id) {
+  deselectAll();
+  selectedPath = id;
+  const p = paths.find(p => p.id === id);
+  if (p) {
+    p.group.classList.add('selected');
+    updatePathHandles(p, true);
   }
 }
 
@@ -389,6 +439,14 @@ function deselectAll() {
     placedBalls[selectedBall].el.classList.remove('selected');
   }
   selectedBall = null;
+  if (selectedPath !== null) {
+    const p = paths.find(p => p.id === selectedPath);
+    if (p) {
+      p.group.classList.remove('selected');
+      updatePathHandles(p, false);
+    }
+  }
+  selectedPath = null;
 }
 
 function removeBall(num) {
@@ -398,6 +456,15 @@ function removeBall(num) {
   const paletteImg = document.querySelector(`.palette-ball[data-ball="${num}"]`);
   if (paletteImg) paletteImg.classList.remove('placed');
   if (selectedBall === num) selectedBall = null;
+  exportCLI();
+}
+
+function removePath(id) {
+  const idx = paths.findIndex(p => p.id === id);
+  if (idx === -1) return;
+  paths[idx].group.remove();
+  paths.splice(idx, 1);
+  if (selectedPath === id) selectedPath = null;
   exportCLI();
 }
 
@@ -451,8 +518,10 @@ function makeTableDraggable(el, entry) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     deselectAll();
-  } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBall !== null) {
-    removeBall(selectedBall);
+    if (pathMode) togglePathMode();
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selectedPath !== null) removePath(selectedPath);
+    else if (selectedBall !== null) removeBall(selectedBall);
   }
 });
 
@@ -467,30 +536,214 @@ container.addEventListener('click', (e) => {
 container.addEventListener('mousemove', (e) => {
   const rect = tableImg.getBoundingClientRect();
   const [tx, ty] = pxToTable(e.clientX - rect.left, e.clientY - rect.top);
-  if (selectedBall === null) {
-    coordsEl.textContent = `(${tx}, ${ty})`;
-  }
+  coordsEl.textContent = `(${tx}, ${ty})`;
 });
+
+// ========== PATH MODE ==========
+const pathModeBtn = document.getElementById('path-mode-btn');
+pathModeBtn.addEventListener('click', togglePathMode);
+
+function togglePathMode() {
+  pathMode = !pathMode;
+  pathModeBtn.classList.toggle('active', pathMode);
+  container.style.cursor = pathMode ? 'crosshair' : '';
+}
+
+function resizePathSvg() {
+  pathSvg.setAttribute('width', tableImg.clientWidth);
+  pathSvg.setAttribute('height', tableImg.clientHeight);
+}
+tableImg.onload = () => { updateScale(); resizePathSvg(); };
+setTimeout(resizePathSvg, 100);
+
+// Drawing a new path: mousedown on table in path mode
+let pathDrawing = null; // { x1, y1, tempLine, tempArrow }
+container.addEventListener('mousedown', (e) => {
+  if (!pathMode) return;
+  if (e.target !== tableImg && !e.target.closest('#path-svg')) return;
+  if (e.button !== 0) return;
+
+  const rect = tableImg.getBoundingClientRect();
+  const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  const [px, py] = tableToPx(tx, ty);
+
+  // Create temp line
+  const line = svgEl('line', {
+    x1: px, y1: py, x2: px, y2: py,
+    stroke: 'white', 'stroke-width': 2, 'stroke-dasharray': '8,6',
+    'pointer-events': 'none',
+  });
+  const arrow = svgEl('polygon', {
+    points: `${px},${py} ${px},${py} ${px},${py}`,
+    fill: 'white', 'pointer-events': 'none',
+  });
+  pathSvg.appendChild(line);
+  pathSvg.appendChild(arrow);
+  pathDrawing = { tx1: tx, ty1: ty, line, arrow };
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!pathDrawing) return;
+  const rect = tableImg.getBoundingClientRect();
+  const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  const [px1, py1] = tableToPx(pathDrawing.tx1, pathDrawing.ty1);
+  const [px2, py2] = tableToPx(tx, ty);
+  pathDrawing.line.setAttribute('x2', px2);
+  pathDrawing.line.setAttribute('y2', py2);
+  pathDrawing.arrow.setAttribute('points', arrowPoints(px1, py1, px2, py2));
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (!pathDrawing) return;
+  const rect = tableImg.getBoundingClientRect();
+  const [tx2, ty2] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+  // Remove temp elements
+  pathDrawing.line.remove();
+  pathDrawing.arrow.remove();
+  // Only create if path has some length; otherwise treat as a deselect click
+  const dx = tx2 - pathDrawing.tx1;
+  const dy = ty2 - pathDrawing.ty1;
+  if (Math.sqrt(dx*dx + dy*dy) > 0.5) {
+    createPath(pathDrawing.tx1, pathDrawing.ty1, tx2, ty2);
+  } else {
+    deselectAll();
+  }
+  pathDrawing = null;
+});
+
+function createPath(x1, y1, x2, y2) {
+  const id = nextPathId++;
+  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  group.classList.add('path-group');
+
+  // Wide invisible hit area for clicking
+  const hitarea = svgEl('line', {
+    class: 'path-hitarea',
+    'stroke-width': 14, stroke: 'transparent',
+  });
+  const line = svgEl('line', {
+    class: 'path-line',
+    'stroke-width': 2, stroke: 'white', 'stroke-dasharray': '8,6',
+  });
+  const arrow = svgEl('polygon', {
+    class: 'path-arrow', fill: 'white',
+  });
+  // Handles (hidden by default, shown on select)
+  const h1 = svgEl('circle', { class: 'path-handle', r: 6, style: 'display:none' });
+  const h2 = svgEl('circle', { class: 'path-handle', r: 6, style: 'display:none' });
+
+  group.appendChild(hitarea);
+  group.appendChild(line);
+  group.appendChild(arrow);
+  group.appendChild(h1);
+  group.appendChild(h2);
+  pathSvg.appendChild(group);
+
+  const p = { id, x1, y1, x2, y2, group, line, arrow, hitarea, h1, h2 };
+  paths.push(p);
+  renderPath(p);
+
+  // Click to select
+  [hitarea, line, arrow].forEach(el => {
+    el.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      selectPath(id);
+    });
+  });
+
+  // Handle dragging
+  setupHandleDrag(h1, p, 'start');
+  setupHandleDrag(h2, p, 'end');
+
+  selectPath(id);
+  exportCLI();
+}
+
+function renderPath(p) {
+  const [px1, py1] = tableToPx(p.x1, p.y1);
+  const [px2, py2] = tableToPx(p.x2, p.y2);
+  setAttrs(p.line, { x1: px1, y1: py1, x2: px2, y2: py2 });
+  setAttrs(p.hitarea, { x1: px1, y1: py1, x2: px2, y2: py2 });
+  p.arrow.setAttribute('points', arrowPoints(px1, py1, px2, py2));
+  setAttrs(p.h1, { cx: px1, cy: py1 });
+  setAttrs(p.h2, { cx: px2, cy: py2 });
+}
+
+function updatePathHandles(p, show) {
+  p.h1.style.display = show ? '' : 'none';
+  p.h2.style.display = show ? '' : 'none';
+}
+
+function setupHandleDrag(handle, p, which) {
+  let dragging = false;
+  handle.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const rect = tableImg.getBoundingClientRect();
+    const [tx, ty] = clampToTable(...pxToTable(e.clientX - rect.left, e.clientY - rect.top));
+    if (which === 'start') { p.x1 = tx; p.y1 = ty; }
+    else { p.x2 = tx; p.y2 = ty; }
+    renderPath(p);
+    coordsEl.textContent = `Path ${which}: (${tx}, ${ty})`;
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; exportCLI(); }
+  });
+}
+
+// SVG helpers
+function svgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+function setAttrs(el, attrs) {
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+}
+function arrowPoints(px1, py1, px2, py2) {
+  const dx = px2 - px1, dy = py2 - py1;
+  const len = Math.sqrt(dx*dx + dy*dy);
+  if (len < 1) return `${px2},${py2} ${px2},${py2} ${px2},${py2}`;
+  const ux = dx/len, uy = dy/len;
+  const s = 10;
+  const w1x = px2 - ux*s + (-uy)*s*0.5;
+  const w1y = py2 - uy*s + (ux)*s*0.5;
+  const w2x = px2 - ux*s - (-uy)*s*0.5;
+  const w2y = py2 - uy*s - (ux)*s*0.5;
+  return `${px2},${py2} ${w1x},${w1y} ${w2x},${w2y}`;
+}
 
 // Export CLI
 function exportCLI() {
-  const nums = Object.keys(placedBalls).map(Number).sort((a, b) => a - b);
-  if (nums.length === 0) {
-    output.textContent = 'No balls placed.';
-    return;
-  }
   const parts = ['python -m pooltool.cli --ppi 24'];
+  const nums = Object.keys(placedBalls).map(Number).sort((a, b) => a - b);
   nums.forEach(n => {
     const b = placedBalls[n];
     parts.push(`-b ${n}:${b.tx},${b.ty}`);
   });
+  paths.forEach(p => {
+    parts.push(`-p ${p.x1},${p.y1}:${p.x2},${p.y2}`);
+  });
+  if (nums.length === 0 && paths.length === 0) {
+    output.textContent = 'No items placed.';
+    return;
+  }
   output.textContent = parts.join(' \\\n  ');
 }
 
 // Reposition on resize
 window.addEventListener('resize', () => {
   updateScale();
+  resizePathSvg();
   Object.values(placedBalls).forEach(positionBall);
+  paths.forEach(renderPath);
 });
 </script>
 </body>
