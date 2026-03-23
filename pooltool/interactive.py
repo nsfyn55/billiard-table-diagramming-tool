@@ -89,6 +89,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   #table-container, .table-ball, .ghost-sprite, .palette-ball, .palette-ghost, #path-svg { touch-action: none; }
+  #table-container, #table-container * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   body {
     background: #1a1a1a;
     color: #eee;
@@ -511,6 +512,9 @@ const ghosts = []; // { id, tx, ty, el }
 let nextGhostId = 0;
 let selectedGhost = null;
 
+// Prevent long-press context menu on mobile
+container.addEventListener('contextmenu', (e) => e.preventDefault());
+
 // Convert screen coords to container-internal display coords
 function screenToContainer(clientX, clientY) {
   const containerRect = container.getBoundingClientRect();
@@ -525,9 +529,13 @@ function screenToContainer(clientX, clientY) {
 let paletteDragData = null;
 let paletteDragClone = null;
 
+let paletteDragIsTouch = false;
+
 function startPaletteDrag(e, data, sourceEl) {
   e.preventDefault();
   paletteDragData = data;
+  paletteDragIsTouch = e.pointerType === 'touch';
+  const offset = paletteDragIsTouch ? TOUCH_OFFSET * 2 : 0;
   paletteDragClone = sourceEl.cloneNode(true);
   paletteDragClone.style.position = 'fixed';
   paletteDragClone.style.pointerEvents = 'none';
@@ -535,27 +543,32 @@ function startPaletteDrag(e, data, sourceEl) {
   paletteDragClone.style.opacity = '0.8';
   paletteDragClone.style.width = '40px';
   paletteDragClone.style.height = '40px';
-  paletteDragClone.style.left = (e.clientX - 20) + 'px';
-  paletteDragClone.style.top = (e.clientY - 20) + 'px';
+  paletteDragClone.style.left = (e.clientX - 20 - offset) + 'px';
+  paletteDragClone.style.top = (e.clientY - 20 - offset) + 'px';
   document.body.appendChild(paletteDragClone);
 }
 
 document.addEventListener('pointermove', (e) => {
   if (!paletteDragClone) return;
-  paletteDragClone.style.left = (e.clientX - 20) + 'px';
-  paletteDragClone.style.top = (e.clientY - 20) + 'px';
+  const offset = paletteDragIsTouch ? TOUCH_OFFSET * 2 : 0;
+  paletteDragClone.style.left = (e.clientX - 20 - offset) + 'px';
+  paletteDragClone.style.top = (e.clientY - 20 - offset) + 'px';
 });
 
+let justDroppedFromPalette = false;
 document.addEventListener('pointerup', (e) => {
   if (!paletteDragClone) return;
   paletteDragClone.remove();
   paletteDragClone = null;
 
-  // Check if dropped over the table
+  // Check if dropped over the table (use offset position for touch)
+  const offset = paletteDragIsTouch ? TOUCH_OFFSET * 2 : 0;
+  const dropX = e.clientX - offset;
+  const dropY = e.clientY - offset;
   const containerRect = container.getBoundingClientRect();
-  if (e.clientX >= containerRect.left && e.clientX <= containerRect.right &&
-      e.clientY >= containerRect.top && e.clientY <= containerRect.bottom) {
-    const [dispX, dispY] = screenToContainer(e.clientX, e.clientY);
+  if (dropX >= containerRect.left && dropX <= containerRect.right &&
+      dropY >= containerRect.top && dropY <= containerRect.bottom) {
+    const [dispX, dispY] = screenToContainer(dropX, dropY);
     const [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
     if (paletteDragData === 'ghost') {
       placeGhost(tx, ty);
@@ -566,6 +579,7 @@ document.addEventListener('pointerup', (e) => {
         placeBall(ballNum, bx, by);
       }
     }
+    justDroppedFromPalette = true;
   }
   paletteDragData = null;
 });
@@ -602,14 +616,7 @@ function placeBall(num, tx, ty) {
   // Mark palette as placed
   paletteImg.classList.add('placed');
 
-  // Click to select
-  el.addEventListener('pointerdown', (e) => {
-    // Will be handled by the drag system
-  });
-  el.addEventListener('click', (e) => {
-    e.stopPropagation();
-    selectBall(num);
-  });
+  // Selection is handled in makeTableDraggable pointerup
 
   // Make draggable on table
   makeTableDraggable(el, entry);
@@ -713,6 +720,10 @@ function removeGhost(id) {
   exportCLI();
 }
 
+// Touch offset: shift sprite up-left so it's visible above finger
+const TOUCH_OFFSET = 21; // pixels in display coords
+let anyDragActive = false; // global flag to block pinch/pan during drags
+
 // Table dragging
 function makeTableDraggable(el, entry) {
   let dragging = false;
@@ -722,11 +733,15 @@ function makeTableDraggable(el, entry) {
   el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    anyDragActive = true;
     moved = false;
+    const isTouch = e.pointerType === 'touch';
+    const offset = isTouch ? TOUCH_OFFSET / zoomScale : 0;
     startX = e.clientX;
     startY = e.clientY;
-    origLeft = parseFloat(el.style.left) || 0;
-    origTop = parseFloat(el.style.top) || 0;
+    origLeft = (parseFloat(el.style.left) || 0) - offset;
+    origTop = (parseFloat(el.style.top) || 0) - offset;
+    if (isTouch) { el.style.left = origLeft + 'px'; el.style.top = origTop + 'px'; moved = true; }
     e.preventDefault();
   });
 
@@ -754,7 +769,10 @@ function makeTableDraggable(el, entry) {
   document.addEventListener('pointerup', () => {
     if (dragging) {
       dragging = false;
+      anyDragActive = false;
       if (moved) exportCLI();
+      const bn = parseInt(el.dataset.ball);
+      if (!isNaN(bn)) selectBall(bn);
     }
   });
 }
@@ -774,7 +792,8 @@ document.addEventListener('keydown', (e) => {
 
 // Click on table background to deselect
 container.addEventListener('click', (e) => {
-  if (e.target === tableImg) {
+  if (justDroppedFromPalette) { justDroppedFromPalette = false; return; }
+  if (e.target === tableImg || e.target === container) {
     deselectAll();
   }
 });
@@ -831,11 +850,15 @@ function makeGhostDraggable(el, entry) {
   el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    anyDragActive = true;
     moved = false;
+    const isTouch = e.pointerType === 'touch';
+    const offset = isTouch ? TOUCH_OFFSET / zoomScale : 0;
     startX = e.clientX;
     startY = e.clientY;
-    origLeft = parseFloat(el.style.left) || 0;
-    origTop = parseFloat(el.style.top) || 0;
+    origLeft = (parseFloat(el.style.left) || 0) - offset;
+    origTop = (parseFloat(el.style.top) || 0) - offset;
+    if (isTouch) { el.style.left = origLeft + 'px'; el.style.top = origTop + 'px'; moved = true; }
     e.preventDefault();
   });
 
@@ -859,7 +882,9 @@ function makeGhostDraggable(el, entry) {
   document.addEventListener('pointerup', () => {
     if (dragging) {
       dragging = false;
+      anyDragActive = false;
       if (moved) exportCLI();
+      selectGhost(entry.id);
     }
   });
 }
@@ -932,6 +957,7 @@ document.addEventListener('pointerup', (e) => {
   const dy = ty2 - pathDrawing.ty1;
   if (Math.sqrt(dx*dx + dy*dy) > 0.5) {
     createPath(pathDrawing.tx1, pathDrawing.ty1, tx2, ty2);
+    togglePathMode(false);
   } else {
     deselectAll();
   }
@@ -970,13 +996,56 @@ function createPath(x1, y1, x2, y2) {
   paths.push(p);
   renderPath(p);
 
-  // Click to select
+  // Click to select + drag to move whole path
+  let pathDragging = false;
+  let pathDragStart = null;
   [hitarea, line, arrow].forEach(el => {
     el.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       e.preventDefault();
       selectPath(id);
+      pathDragging = true;
+      anyDragActive = true;
+      const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+      const isTouch = e.pointerType === 'touch';
+      const offset = isTouch ? TOUCH_OFFSET : 0;
+      pathDragStart = { cx: dx - offset, cy: dy - offset, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2 };
     });
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!pathDragging || !pathDragStart) return;
+    const [dx, dy] = screenToContainer(e.clientX, e.clientY);
+    const isTouch = e.pointerType === 'touch';
+    const offset = isTouch ? TOUCH_OFFSET : 0;
+    const [startTx, startTy] = pxToTable(pathDragStart.cx, pathDragStart.cy);
+    const [curTx, curTy] = pxToTable(dx - offset, dy - offset);
+    let dtx = curTx - startTx;
+    let dty = curTy - startTy;
+    // Clamp so neither endpoint exceeds table boundaries
+    const nx1 = pathDragStart.x1 + dtx, ny1 = pathDragStart.y1 + dty;
+    const nx2 = pathDragStart.x2 + dtx, ny2 = pathDragStart.y2 + dty;
+    const maxX = M.max_ball_x, maxY = M.max_ball_y;
+    if (nx1 < -maxX) dtx += (-maxX - nx1);
+    if (nx1 > maxX) dtx += (maxX - nx1);
+    if (nx2 < -maxX) dtx += (-maxX - nx2);
+    if (nx2 > maxX) dtx += (maxX - nx2);
+    if (ny1 < -maxY) dty += (-maxY - ny1);
+    if (ny1 > maxY) dty += (maxY - ny1);
+    if (ny2 < -maxY) dty += (-maxY - ny2);
+    if (ny2 > maxY) dty += (maxY - ny2);
+    p.x1 = pathDragStart.x1 + dtx;
+    p.y1 = pathDragStart.y1 + dty;
+    p.x2 = pathDragStart.x2 + dtx;
+    p.y2 = pathDragStart.y2 + dty;
+    renderPath(p);
+  });
+  document.addEventListener('pointerup', () => {
+    if (pathDragging) {
+      pathDragging = false;
+      anyDragActive = false;
+      pathDragStart = null;
+      exportCLI();
+    }
   });
 
   // Handle dragging
@@ -1005,23 +1074,27 @@ function updatePathHandles(p, show) {
 
 function setupHandleDrag(handle, p, which) {
   let dragging = false;
+  let isTouch = false;
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    anyDragActive = true;
+    isTouch = e.pointerType === 'touch';
     e.stopPropagation();
     e.preventDefault();
   });
   document.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const [dx, dy] = screenToContainer(e.clientX, e.clientY);
-    const [tx, ty] = clampToTable(...pxToTable(dx, dy));
+    const offset = isTouch ? TOUCH_OFFSET : 0;
+    const [tx, ty] = clampToTable(...pxToTable(dx - offset, dy - offset));
     if (which === 'start') { p.x1 = tx; p.y1 = ty; }
     else { p.x2 = tx; p.y2 = ty; }
     renderPath(p);
     coordsEl.textContent = `Path ${which}: (${tx}, ${ty})`;
   });
   document.addEventListener('pointerup', () => {
-    if (dragging) { dragging = false; exportCLI(); }
+    if (dragging) { dragging = false; anyDragActive = false; exportCLI(); }
   });
 }
 
@@ -1107,9 +1180,11 @@ function applyZoom() {
     tableWrapper.style.height = '';
     container.style.margin = '0 auto';
   } else {
-    // Size wrapper to exactly fit the selected region scaled up
-    tableWrapper.style.width = (zoomSelW * zoomScale) + 'px';
-    tableWrapper.style.height = (zoomSelH * zoomScale) + 'px';
+    // Size wrapper to show the visible region
+    const visW = zoomSelW > 0 ? zoomSelW : (tableImg.clientWidth - zoomOffsetX);
+    const visH = zoomSelH > 0 ? zoomSelH : (tableImg.clientHeight - zoomOffsetY);
+    tableWrapper.style.width = (visW * zoomScale) + 'px';
+    tableWrapper.style.height = (visH * zoomScale) + 'px';
     container.style.margin = '0';
   }
   paths.forEach(renderPath);
@@ -1184,58 +1259,199 @@ document.addEventListener('pointerup', (e) => {
   container.style.cursor = '';
 });
 
+// ========== PINCH ZOOM (mobile) ==========
+const activePointers = new Map();
+
+container.addEventListener('pointerdown', (e) => {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+}, true);
+
+document.addEventListener('pointerup', (e) => {
+  activePointers.delete(e.pointerId);
+});
+document.addEventListener('pointercancel', (e) => {
+  activePointers.delete(e.pointerId);
+});
+
+let pinchStartDist = null;
+let pinchStartZoom = null;
+let pinchMidX = null;
+let pinchMidY = null;
+
+document.addEventListener('pointermove', (e) => {
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (activePointers.size === 2 && !anyDragActive) {
+    const pts = [...activePointers.values()];
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+
+    if (pinchStartDist === null) {
+      // Start of pinch
+      pinchStartDist = dist;
+      pinchStartZoom = zoomScale;
+      // Store midpoint in container coords for zoom center
+      const [cx, cy] = screenToContainer(midX, midY);
+      pinchMidX = cx;
+      pinchMidY = cy;
+    } else {
+      // Ongoing pinch — scale relative to start
+      const newZoom = Math.max(0.5, Math.min(10, pinchStartZoom * (dist / pinchStartDist)));
+
+      // Zoom toward the pinch midpoint
+      // The midpoint should stay at the same screen position
+      zoomOffsetX = pinchMidX - (pinchMidX - zoomOffsetX) * (zoomScale / newZoom);
+      zoomOffsetY = pinchMidY - (pinchMidY - zoomOffsetY) * (zoomScale / newZoom);
+
+      zoomScale = newZoom;
+      zoomSelW = 0;
+      zoomSelH = 0;
+      applyZoom();
+    }
+    e.preventDefault();
+  }
+});
+
+// Reset pinch state when a finger lifts
+document.addEventListener('pointerup', (e) => {
+  if (activePointers.size < 2) {
+    pinchStartDist = null;
+    pinchStartZoom = null;
+  }
+});
+
+// ========== PAN (one-finger drag when zoomed) ==========
+let panActive = false;
+let panStartX = 0, panStartY = 0;
+let panOrigOffsetX = 0, panOrigOffsetY = 0;
+
+container.addEventListener('pointerdown', (e) => {
+  if (zoomScale <= 1) return;
+  if (activePointers.size > 1) return;
+  if (anyDragActive) return;
+  // Don't pan if interacting with a ball, ghost, path, or in crop/path mode
+  if (cropMode || pathMode) return;
+  if (e.target.classList.contains('table-ball') || e.target.classList.contains('ghost-sprite')) return;
+  if (e.target.closest('#path-svg')) return;
+  panActive = true;
+  panStartX = e.clientX;
+  panStartY = e.clientY;
+  panOrigOffsetX = zoomOffsetX;
+  panOrigOffsetY = zoomOffsetY;
+  e.preventDefault();
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (!panActive) return;
+  if (activePointers.size > 1) { panActive = false; return; }
+  const dx = (e.clientX - panStartX) / zoomScale;
+  const dy = (e.clientY - panStartY) / zoomScale;
+  zoomOffsetX = panOrigOffsetX - dx;
+  zoomOffsetY = panOrigOffsetY - dy;
+  zoomSelW = 0;
+  zoomSelH = 0;
+  applyZoom();
+});
+
+document.addEventListener('pointerup', (e) => {
+  panActive = false;
+});
+
 // Export to PNG
 document.getElementById('export-png-btn').addEventListener('click', () => {
-  const imgW = tableImg.naturalWidth;
-  const imgH = tableImg.naturalHeight;
-  const s = imgW / tableImg.clientWidth; // scale from display to full-res
+  const natW = tableImg.naturalWidth;
+  const natH = tableImg.naturalHeight;
+  const s = natW / tableImg.clientWidth; // display px to image px
 
+  // Helper: table coords to image pixel coords
+  function t2i(tx, ty) {
+    const imgX = M.center_px + tx * M.ppi;
+    const imgY = M.center_py - ty * M.ppi;
+    return [imgX, imgY];
+  }
+
+  // Determine crop region in image pixels
+  let cropX = 0, cropY = 0, cropW = natW, cropH = natH;
+  if (zoomScale !== 1) {
+    // What's visible = the wrapper size / zoomScale (in container display px)
+    const visW = tableWrapper.clientWidth / zoomScale;
+    const visH = tableWrapper.clientHeight / zoomScale;
+    cropX = zoomOffsetX * s;
+    cropY = zoomOffsetY * s;
+    cropW = visW * s;
+    cropH = visH * s;
+    // Clamp to image bounds
+    if (cropX + cropW > natW) cropW = natW - cropX;
+    if (cropY + cropH > natH) cropH = natH - cropY;
+    if (cropX < 0) { cropW += cropX; cropX = 0; }
+    if (cropY < 0) { cropH += cropY; cropY = 0; }
+  }
+
+  const outW = Math.round(cropW);
+  const outH = Math.round(cropH);
   const canvas = document.createElement('canvas');
-  canvas.width = imgW;
-  canvas.height = imgH;
+  canvas.width = outW;
+  canvas.height = outH;
   const ctx = canvas.getContext('2d');
 
-  // Draw table
-  ctx.drawImage(tableImg, 0, 0, imgW, imgH);
+  // Scale factor for strokes/arrows: keep them proportional to output size
+  // When cropped, elements should look the same relative thickness as in full PNG
+  const rs = cropW / natW; // render scale: 1 when full, <1 when cropped
+
+  // Draw table (cropped region)
+  ctx.drawImage(tableImg, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+
+  // Offset for drawing: shift everything by -crop origin
+  const ox = -cropX;
+  const oy = -cropY;
 
   // Draw balls
   for (const [num, b] of Object.entries(placedBalls)) {
     const img = document.querySelector(`.palette-ball[data-ball="${num}"]`);
     const size = parseFloat(b.el.style.width) * s;
-    const x = parseFloat(b.el.style.left) * s;
-    const y = parseFloat(b.el.style.top) * s;
+    const x = parseFloat(b.el.style.left) * s + ox;
+    const y = parseFloat(b.el.style.top) * s + oy;
     ctx.drawImage(img, x, y, size, size);
   }
 
   // Draw ghosts
   for (const g of ghosts) {
-    const cx = parseFloat(g.el.style.left) * s + parseFloat(g.el.style.width) * s / 2;
-    const cy = parseFloat(g.el.style.top) * s + parseFloat(g.el.style.height) * s / 2;
-    const r = parseFloat(g.el.style.width) * s / 2 - 2 * s;
+    const gsize = parseFloat(g.el.style.width) * s;
+    const gcx = (parseFloat(g.el.style.left) + parseFloat(g.el.style.width) / 2) * s + ox;
+    const gcy = (parseFloat(g.el.style.top) + parseFloat(g.el.style.width) / 2) * s + oy;
+    const r = gsize / 2 - 2 * s * rs;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.arc(gcx, gcy, r, 0, 2 * Math.PI);
     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-    ctx.lineWidth = 2 * s;
-    ctx.setLineDash([4 * s, 3 * s]);
+    ctx.lineWidth = 2 * s * rs;
+    ctx.setLineDash([4 * s * rs, 3 * s * rs]);
     ctx.stroke();
     ctx.setLineDash([]);
   }
 
   // Draw paths
   for (const p of paths) {
-    const x1 = p.x1 * s, y1 = p.y1 * s, x2 = p.x2 * s, y2 = p.y2 * s;
+    const [ix1, iy1] = t2i(p.x1, p.y1);
+    const [ix2, iy2] = t2i(p.x2, p.y2);
+    const x1 = ix1 + ox, y1 = iy1 + oy;
+    const x2 = ix2 + ox, y2 = iy2 + oy;
     const dx = x2 - x1, dy = y2 - y1;
     const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1) continue;
     const ux = dx / len, uy = dy / len;
-    const arrowSize = 10 * s;
+    const arrowSize = 10 * s * rs;
 
     // Dotted line
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2 - ux * arrowSize, y2 - uy * arrowSize);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = 2 * s;
-    ctx.setLineDash([8 * s, 6 * s]);
+    ctx.lineWidth = 2 * s * rs;
+    ctx.setLineDash([8 * s * rs, 6 * s * rs]);
     ctx.stroke();
     ctx.setLineDash([]);
 
