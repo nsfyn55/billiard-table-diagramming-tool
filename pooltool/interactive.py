@@ -84,9 +84,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Pool Table Editor</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  #table-container, .table-ball, .ghost-sprite, .palette-ball, .palette-ghost, #path-svg { touch-action: none; }
   body {
     background: #1a1a1a;
     color: #eee;
@@ -322,6 +324,42 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     color: #888;
     line-height: 1.5;
   }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    body { padding: 4px; }
+    #palette {
+      gap: 3px;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+    }
+    .palette-ball { width: 28px; height: 28px; }
+    #palette .section-label { font-size: 9px; margin-left: 4px; margin-right: 1px; }
+    #main-area { flex-direction: column; width: 100%; }
+    #side-palettes {
+      flex-direction: row;
+      width: 100%;
+      margin-right: 0;
+      margin-bottom: 6px;
+    }
+    #annotations-palette, #tools-palette {
+      flex-direction: row;
+      width: auto;
+      padding: 6px 8px;
+    }
+    #tools-palette { width: auto; margin-top: 0; }
+    #table-img { max-height: 60vh; max-width: 100%; width: auto; }
+    #table-wrapper { width: 100% !important; }
+    #help { display: none; }
+    #delete-btn {
+      position: fixed !important;
+      bottom: 20px;
+      right: 20px;
+      z-index: 9999;
+      font-size: 14px !important;
+      padding: 10px 20px !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -329,16 +367,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div id="editor-wrapper">
   <div id="palette">
     <span class="section-label">Cue</span>
-    <img class="palette-ball" data-ball="0" src="data:image/png;base64,{{ ball_images[0] }}" draggable="true" title="Cue ball" />
+    <img class="palette-ball" data-ball="0" src="data:image/png;base64,{{ ball_images[0] }}" title="Cue ball" />
     <span class="section-label">Solids</span>
     {% for n in range(1, 8) %}
-    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
+    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" title="Ball {{ n }}" />
     {% endfor %}
     <span class="section-label">8</span>
-    <img class="palette-ball" data-ball="8" src="data:image/png;base64,{{ ball_images[8] }}" draggable="true" title="8-ball" />
+    <img class="palette-ball" data-ball="8" src="data:image/png;base64,{{ ball_images[8] }}" title="8-ball" />
     <span class="section-label">Stripes</span>
     {% for n in range(9, 16) %}
-    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" draggable="true" title="Ball {{ n }}" />
+    <img class="palette-ball" data-ball="{{ n }}" src="data:image/png;base64,{{ ball_images[n] }}" title="Ball {{ n }}" />
     {% endfor %}
   </div>
   <div id="main-area">
@@ -351,7 +389,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <polygon points="24,8 18,4 18,12" fill="currentColor"/>
         </svg>
       </button>
-      <div class="palette-ghost" id="ghost-drag" draggable="true" title="Drag ghost ball onto table">
+      <div class="palette-ghost" id="ghost-drag" title="Drag ghost ball onto table">
         <svg width="36" height="36" viewBox="0 0 36 36">
           <circle cx="18" cy="18" r="13" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-dasharray="4,3"/>
         </svg>
@@ -366,6 +404,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </button>
       <button class="mode-btn" id="reset-zoom-btn" title="Reset zoom to full table" style="font-size:10px;padding:4px 6px;">Reset</button>
       <button class="mode-btn" id="export-png-btn" title="Export as PNG in new tab" style="font-size:10px;padding:4px 6px;">To PNG</button>
+      <button class="mode-btn" id="delete-btn" title="Delete selected item" style="font-size:10px;padding:4px 6px;background:#8b1a1a;color:#fff;border-color:#a33;display:none;">Delete</button>
     </div>
   </div>
   <div id="table-wrapper">
@@ -472,46 +511,69 @@ const ghosts = []; // { id, tx, ty, el }
 let nextGhostId = 0;
 let selectedGhost = null;
 
-// --- Palette drag ---
-document.querySelectorAll('.palette-ball').forEach(img => {
-  img.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/plain', img.dataset.ball);
-    e.dataTransfer.effectAllowed = 'copy';
-  });
-});
-
 // Convert screen coords to container-internal display coords
 function screenToContainer(clientX, clientY) {
   const containerRect = container.getBoundingClientRect();
-  // Position within the scaled container
   const cx = clientX - containerRect.left;
   const cy = clientY - containerRect.top;
-  // Undo the CSS transform scale
   const dispX = cx / zoomScale;
   const dispY = cy / zoomScale;
   return [dispX, dispY];
 }
 
-// Drop on table
-container.addEventListener('dragover', (e) => {
+// --- Palette drag (pointer-based, works on touch + mouse) ---
+let paletteDragData = null;
+let paletteDragClone = null;
+
+function startPaletteDrag(e, data, sourceEl) {
   e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
+  paletteDragData = data;
+  paletteDragClone = sourceEl.cloneNode(true);
+  paletteDragClone.style.position = 'fixed';
+  paletteDragClone.style.pointerEvents = 'none';
+  paletteDragClone.style.zIndex = '9999';
+  paletteDragClone.style.opacity = '0.8';
+  paletteDragClone.style.width = '40px';
+  paletteDragClone.style.height = '40px';
+  paletteDragClone.style.left = (e.clientX - 20) + 'px';
+  paletteDragClone.style.top = (e.clientY - 20) + 'px';
+  document.body.appendChild(paletteDragClone);
+}
+
+document.addEventListener('pointermove', (e) => {
+  if (!paletteDragClone) return;
+  paletteDragClone.style.left = (e.clientX - 20) + 'px';
+  paletteDragClone.style.top = (e.clientY - 20) + 'px';
 });
 
-container.addEventListener('drop', (e) => {
-  e.preventDefault();
-  const data = e.dataTransfer.getData('text/plain');
-  const [dispX, dispY] = screenToContainer(e.clientX, e.clientY);
-  const [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
+document.addEventListener('pointerup', (e) => {
+  if (!paletteDragClone) return;
+  paletteDragClone.remove();
+  paletteDragClone = null;
 
-  if (data === 'ghost') {
-    placeGhost(tx, ty);
-  } else {
-    const ballNum = parseInt(data);
-    if (isNaN(ballNum)) return;
-    let [bx, by] = resolveOverlaps(ballNum, tx, ty);
-    placeBall(ballNum, bx, by);
+  // Check if dropped over the table
+  const containerRect = container.getBoundingClientRect();
+  if (e.clientX >= containerRect.left && e.clientX <= containerRect.right &&
+      e.clientY >= containerRect.top && e.clientY <= containerRect.bottom) {
+    const [dispX, dispY] = screenToContainer(e.clientX, e.clientY);
+    const [tx, ty] = clampToTable(...pxToTable(dispX, dispY));
+    if (paletteDragData === 'ghost') {
+      placeGhost(tx, ty);
+    } else {
+      const ballNum = parseInt(paletteDragData);
+      if (!isNaN(ballNum)) {
+        let [bx, by] = resolveOverlaps(ballNum, tx, ty);
+        placeBall(ballNum, bx, by);
+      }
+    }
   }
+  paletteDragData = null;
+});
+
+document.querySelectorAll('.palette-ball').forEach(img => {
+  img.addEventListener('pointerdown', (e) => {
+    startPaletteDrag(e, img.dataset.ball, img);
+  });
 });
 
 function placeBall(num, tx, ty) {
@@ -541,7 +603,7 @@ function placeBall(num, tx, ty) {
   paletteImg.classList.add('placed');
 
   // Click to select
-  el.addEventListener('mousedown', (e) => {
+  el.addEventListener('pointerdown', (e) => {
     // Will be handled by the drag system
   });
   el.addEventListener('click', (e) => {
@@ -569,6 +631,7 @@ function selectBall(num) {
   if (placedBalls[num]) {
     placedBalls[num].el.classList.add('selected');
   }
+  updateDeleteBtn();
 }
 
 function selectPath(id) {
@@ -579,6 +642,7 @@ function selectPath(id) {
     p.group.classList.add('selected');
     updatePathHandles(p, true);
   }
+  updateDeleteBtn();
 }
 
 function selectGhost(id) {
@@ -586,7 +650,19 @@ function selectGhost(id) {
   selectedGhost = id;
   const g = ghosts.find(g => g.id === id);
   if (g) g.el.classList.add('selected');
+  updateDeleteBtn();
 }
+
+const deleteBtn = document.getElementById('delete-btn');
+function updateDeleteBtn() {
+  deleteBtn.style.display = (selectedBall !== null || selectedGhost !== null || selectedPath !== null) ? '' : 'none';
+}
+deleteBtn.addEventListener('click', () => {
+  if (selectedGhost !== null) removeGhost(selectedGhost);
+  else if (selectedPath !== null) removePath(selectedPath);
+  else if (selectedBall !== null) removeBall(selectedBall);
+  updateDeleteBtn();
+});
 
 function deselectAll() {
   if (selectedBall !== null && placedBalls[selectedBall]) {
@@ -606,6 +682,7 @@ function deselectAll() {
     if (g) g.el.classList.remove('selected');
   }
   selectedGhost = null;
+  updateDeleteBtn();
 }
 
 function removeBall(num) {
@@ -642,7 +719,7 @@ function makeTableDraggable(el, entry) {
   let startX, startY, origLeft, origTop;
   let moved = false;
 
-  el.addEventListener('mousedown', (e) => {
+  el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
     moved = false;
@@ -653,7 +730,7 @@ function makeTableDraggable(el, entry) {
     e.preventDefault();
   });
 
-  document.addEventListener('mousemove', (e) => {
+  document.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const dx = (e.clientX - startX) / zoomScale;
     const dy = (e.clientY - startY) / zoomScale;
@@ -674,7 +751,7 @@ function makeTableDraggable(el, entry) {
     coordsEl.textContent = `Ball ${ballNum}: (${tx}, ${ty})`;
   });
 
-  document.addEventListener('mouseup', () => {
+  document.addEventListener('pointerup', () => {
     if (dragging) {
       dragging = false;
       if (moved) exportCLI();
@@ -703,7 +780,7 @@ container.addEventListener('click', (e) => {
 });
 
 // Mouse coords
-container.addEventListener('mousemove', (e) => {
+container.addEventListener('pointermove', (e) => {
   const [dx, dy] = screenToContainer(e.clientX, e.clientY);
   const [tx, ty] = pxToTable(dx, dy);
   coordsEl.textContent = `(${tx}, ${ty})`;
@@ -711,9 +788,8 @@ container.addEventListener('mousemove', (e) => {
 
 // ========== GHOST BALL DRAG FROM PALETTE ==========
 const ghostDrag = document.getElementById('ghost-drag');
-ghostDrag.addEventListener('dragstart', (e) => {
-  e.dataTransfer.setData('text/plain', 'ghost');
-  e.dataTransfer.effectAllowed = 'copy';
+ghostDrag.addEventListener('pointerdown', (e) => {
+  startPaletteDrag(e, 'ghost', ghostDrag);
 });
 
 function placeGhost(tx, ty) {
@@ -752,7 +828,7 @@ function makeGhostDraggable(el, entry) {
   let startX, startY, origLeft, origTop;
   let moved = false;
 
-  el.addEventListener('mousedown', (e) => {
+  el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
     moved = false;
@@ -763,7 +839,7 @@ function makeGhostDraggable(el, entry) {
     e.preventDefault();
   });
 
-  document.addEventListener('mousemove', (e) => {
+  document.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const dx = (e.clientX - startX) / zoomScale;
     const dy = (e.clientY - startY) / zoomScale;
@@ -780,7 +856,7 @@ function makeGhostDraggable(el, entry) {
     coordsEl.textContent = `Ghost: (${tx}, ${ty})`;
   });
 
-  document.addEventListener('mouseup', () => {
+  document.addEventListener('pointerup', () => {
     if (dragging) {
       dragging = false;
       if (moved) exportCLI();
@@ -807,7 +883,7 @@ setTimeout(resizePathSvg, 100);
 
 // Drawing a new path: mousedown on table in path mode
 let pathDrawing = null; // { x1, y1, tempLine, tempArrow }
-container.addEventListener('mousedown', (e) => {
+container.addEventListener('pointerdown', (e) => {
   if (!pathMode) return;
   if (e.target !== tableImg && !e.target.closest('#path-svg')) return;
   if (e.button !== 0) return;
@@ -833,7 +909,7 @@ container.addEventListener('mousedown', (e) => {
   e.preventDefault();
 });
 
-document.addEventListener('mousemove', (e) => {
+document.addEventListener('pointermove', (e) => {
   if (!pathDrawing) return;
   const [dx, dy] = screenToContainer(e.clientX, e.clientY);
   const [tx, ty] = clampToTable(...pxToTable(dx, dy));
@@ -844,7 +920,7 @@ document.addEventListener('mousemove', (e) => {
   pathDrawing.arrow.setAttribute('points', arrowPoints(px1, py1, px2, py2));
 });
 
-document.addEventListener('mouseup', (e) => {
+document.addEventListener('pointerup', (e) => {
   if (!pathDrawing) return;
   const [dx2, dy2] = screenToContainer(e.clientX, e.clientY);
   const [tx2, ty2] = clampToTable(...pxToTable(dx2, dy2));
@@ -896,7 +972,7 @@ function createPath(x1, y1, x2, y2) {
 
   // Click to select
   [hitarea, line, arrow].forEach(el => {
-    el.addEventListener('mousedown', (e) => {
+    el.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       e.preventDefault();
       selectPath(id);
@@ -929,13 +1005,13 @@ function updatePathHandles(p, show) {
 
 function setupHandleDrag(handle, p, which) {
   let dragging = false;
-  handle.addEventListener('mousedown', (e) => {
+  handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
     e.stopPropagation();
     e.preventDefault();
   });
-  document.addEventListener('mousemove', (e) => {
+  document.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const [dx, dy] = screenToContainer(e.clientX, e.clientY);
     const [tx, ty] = clampToTable(...pxToTable(dx, dy));
@@ -944,7 +1020,7 @@ function setupHandleDrag(handle, p, which) {
     renderPath(p);
     coordsEl.textContent = `Path ${which}: (${tx}, ${ty})`;
   });
-  document.addEventListener('mouseup', () => {
+  document.addEventListener('pointerup', () => {
     if (dragging) { dragging = false; exportCLI(); }
   });
 }
@@ -1040,7 +1116,7 @@ function applyZoom() {
 }
 
 // Crop selection drawing
-container.addEventListener('mousedown', (e) => {
+container.addEventListener('pointerdown', (e) => {
   if (!cropMode) return;
   if (e.button !== 0) return;
   cropDragging = true;
@@ -1054,7 +1130,7 @@ container.addEventListener('mousedown', (e) => {
   e.stopPropagation();
 });
 
-document.addEventListener('mousemove', (e) => {
+document.addEventListener('pointermove', (e) => {
   if (!cropDragging) return;
   const [curX, curY] = screenToContainer(e.clientX, e.clientY);
   const x = Math.min(cropStartX, curX);
@@ -1067,7 +1143,7 @@ document.addEventListener('mousemove', (e) => {
   cropSelection.style.height = h + 'px';
 });
 
-document.addEventListener('mouseup', (e) => {
+document.addEventListener('pointerup', (e) => {
   if (!cropDragging) return;
   cropDragging = false;
   cropSelection.style.display = 'none';
