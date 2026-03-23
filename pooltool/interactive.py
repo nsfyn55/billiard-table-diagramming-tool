@@ -365,6 +365,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </svg>
       </button>
       <button class="mode-btn" id="reset-zoom-btn" title="Reset zoom to full table" style="font-size:10px;padding:4px 6px;">Reset</button>
+      <button class="mode-btn" id="export-png-btn" title="Export as PNG in new tab" style="font-size:10px;padding:4px 6px;">To PNG</button>
     </div>
   </div>
   <div id="table-wrapper">
@@ -1105,6 +1106,78 @@ document.addEventListener('mouseup', (e) => {
   cropMode = false;
   cropModeBtn.classList.remove('active');
   container.style.cursor = '';
+});
+
+// Export to PNG
+document.getElementById('export-png-btn').addEventListener('click', () => {
+  const imgW = tableImg.naturalWidth;
+  const imgH = tableImg.naturalHeight;
+  const s = imgW / tableImg.clientWidth; // scale from display to full-res
+
+  const canvas = document.createElement('canvas');
+  canvas.width = imgW;
+  canvas.height = imgH;
+  const ctx = canvas.getContext('2d');
+
+  // Draw table
+  ctx.drawImage(tableImg, 0, 0, imgW, imgH);
+
+  // Draw balls
+  for (const [num, b] of Object.entries(placedBalls)) {
+    const img = document.querySelector(`.palette-ball[data-ball="${num}"]`);
+    const size = parseFloat(b.el.style.width) * s;
+    const x = parseFloat(b.el.style.left) * s;
+    const y = parseFloat(b.el.style.top) * s;
+    ctx.drawImage(img, x, y, size, size);
+  }
+
+  // Draw ghosts
+  for (const g of ghosts) {
+    const cx = parseFloat(g.el.style.left) * s + parseFloat(g.el.style.width) * s / 2;
+    const cy = parseFloat(g.el.style.top) * s + parseFloat(g.el.style.height) * s / 2;
+    const r = parseFloat(g.el.style.width) * s / 2 - 2 * s;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 2 * s;
+    ctx.setLineDash([4 * s, 3 * s]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw paths
+  for (const p of paths) {
+    const x1 = p.x1 * s, y1 = p.y1 * s, x2 = p.x2 * s, y2 = p.y2 * s;
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const ux = dx / len, uy = dy / len;
+    const arrowSize = 10 * s;
+
+    // Dotted line
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2 - ux * arrowSize, y2 - uy * arrowSize);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 2 * s;
+    ctx.setLineDash([8 * s, 6 * s]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrowhead
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - ux * arrowSize - uy * arrowSize * 0.5, y2 - uy * arrowSize + ux * arrowSize * 0.5);
+    ctx.lineTo(x2 - ux * arrowSize + uy * arrowSize * 0.5, y2 - uy * arrowSize - ux * arrowSize * 0.5);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fill();
+  }
+
+  // Open in new tab
+  canvas.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }, 'image/png');
 });
 
 // Reposition on resize
